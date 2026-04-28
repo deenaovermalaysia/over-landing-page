@@ -6,6 +6,7 @@ const { google } = require('googleapis');
 const path = require('path');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───────────────────────────────────────────────
@@ -15,23 +16,29 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'fallback-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 8 * 60 * 60 * 1000 } // 8 hour session
+  cookie: {
+    maxAge: 8 * 60 * 60 * 1000,
+    sameSite: 'lax',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production'
+  }
 }));
 
 // ─── Auth Middleware ──────────────────────────────────────────
 function requireAuth(req, res, next) {
   if (req.session && req.session.loggedIn) return next();
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
   res.redirect('/login.html');
 }
 
-// ─── Static Files (login.html is public) ─────────────────────
+// ─── Static Files ─────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public'), {
-  index: false // prevent auto-serving index.html
+  index: false
 }));
 
 // ─── Routes ──────────────────────────────────────────────────
-
-// Redirect root to login
 app.get('/', (req, res) => {
   if (req.session && req.session.loggedIn) {
     res.redirect('/dashboard.html');
@@ -40,12 +47,10 @@ app.get('/', (req, res) => {
   }
 });
 
-// Serve login page
 app.get('/login.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-// Handle login form
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -60,12 +65,10 @@ app.post('/login', (req, res) => {
   }
 });
 
-// Protect dashboard — must be BEFORE static middleware for this route
 app.get('/dashboard.html', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// Logout
 app.post('/logout', (req, res) => {
   req.session.destroy(() => {
     res.redirect('/login.html');
@@ -81,21 +84,31 @@ function getGoogleAuth() {
   });
 }
 
-// Tab name mapping
 const TAB_NAMES = {
   MY:          'Product Daily ROAS (MY Website)',
   Marketplace: 'Product Daily ROAS (Marketplace)',
   SG:          'Product Daily ROAS (SG Website)',
 };
 
+// ─── Product Name Normalisation ───────────────────────────────
+const NAME_MAP = {
+  '1.2L OVER Cup': 'OVER Cup',
+  '1.2L Cup':      'OVER Cup',
+  '1.2l Cup':      'OVER Cup',
+  '1.2L over Cup': 'OVER Cup',
+};
+
+function normaliseName(raw) {
+  return NAME_MAP[raw.trim()] || raw.trim();
+}
+
 // ─── Parse ROAS Sheet Data ────────────────────────────────────
-// Fetching from G3:AM500, so index 0 = col G, index 1 = col H, index 2 = col I
 function parseROASData(rows) {
-  const COL_NAME       = 0; // G — product name or month title
-  const COL_AVG        = 1; // H — average ROAS over all dates
-  const COL_DATE_START = 2; // I — first date (Day 1)
-  const BLOCK_SIZE     = 14; // rows per month block
-  const MAX_PRODUCTS   = 10; // rows 3–12 within each block
+  const COL_NAME       = 0;
+  const COL_AVG        = 1;
+  const COL_DATE_START = 2;
+  const BLOCK_SIZE     = 14;
+  const MAX_PRODUCTS   = 10;
 
   const months = [];
 
@@ -106,7 +119,6 @@ function parseROASData(rows) {
     const monthName = String(titleRow[COL_NAME]).trim();
     if (!monthName) break;
 
-    // Header row: parse date labels from column I onwards
     const headerRow = rows[blockStart + 1] || [];
     const dates = [];
     for (let col = COL_DATE_START; col < headerRow.length; col++) {
@@ -117,13 +129,14 @@ function parseROASData(rows) {
       }
     }
 
-    // Product rows (up to 10)
-    const products = [];
+    // Parse raw product rows
+    const rawProducts = [];
     for (let r = blockStart + 2; r <= blockStart + 1 + MAX_PRODUCTS; r++) {
       const row = rows[r] || [];
-      const name = row[COL_NAME] ? String(row[COL_NAME]).trim() : '';
-      if (!name) continue;
+      const rawName = row[COL_NAME] ? String(row[COL_NAME]).trim() : '';
+      if (!rawName) continue;
 
+      const name = normaliseName(rawName);
       const avgROAS = parseFloat(row[COL_AVG]) || 0;
 
       const dailyROAS = dates.map((_, i) => {
@@ -132,10 +145,36 @@ function parseROASData(rows) {
         return parseFloat(val) || 0;
       });
 
-      products.push({ name, avgROAS, dailyROAS });
+      rawProducts.push({ name, avgROAS, dailyROAS });
     }
 
-    // Grand total row (index 12 within block)
+    // ── Merge OB + OB Pro into one combined entry ─────────────
+    const obIdx    = rawProducts.findIndex(p => p.name === 'OB');
+    const obProIdx = rawProducts.findIndex(p => p.name === 'OB Pro');
+
+    let products = [...rawProducts];
+
+    if (obIdx !== -1 && obProIdx !== -1) {
+      const ob    = rawProducts[obIdx];
+      const obPro = rawProducts[obProIdx];
+
+      const mergedAvg = (ob.avgROAS + obPro.avgROAS) / 2;
+      const mergedDaily = ob.dailyROAS.map((v, i) => {
+        const v2 = obPro.dailyROAS[i];
+        if (v === null && v2 === null) return null;
+        const vals = [v, v2].filter(x => x !== null);
+        return vals.reduce((a, b) => a + b, 0) / vals.length;
+      });
+
+      const merged = { name: 'OB + OB Pro', avgROAS: mergedAvg, dailyROAS: mergedDaily };
+
+      // Replace OB with merged, remove OB Pro
+      const firstIdx = Math.min(obIdx, obProIdx);
+      products = rawProducts.filter((_, i) => i !== obIdx && i !== obProIdx);
+      products.splice(firstIdx, 0, merged);
+    }
+
+    // Grand total row
     const gtRow = rows[blockStart + 12] || [];
     const grandTotal = {
       avgROAS: parseFloat(gtRow[COL_AVG]) || 0,
@@ -159,7 +198,7 @@ app.get('/api/roas', requireAuth, async (req, res) => {
     const tabName = TAB_NAMES[tab];
 
     if (!tabName) {
-      return res.status(400).json({ error: `Invalid tab. Use: MY, Marketplace, or SG` });
+      return res.status(400).json({ error: 'Invalid tab. Use: MY, Marketplace, or SG' });
     }
 
     const auth = getGoogleAuth();

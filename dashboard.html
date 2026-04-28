@@ -21,6 +21,13 @@
     </div>
     <div class="topbar-right">
       <span class="topbar-label">Last updated: <span id="lastUpdated">—</span></span>
+      <button class="btn-refresh" id="refreshBtn" onclick="manualRefresh()">
+        <svg id="refreshIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+        Refresh
+      </button>
       <form method="POST" action="/logout" style="margin:0">
         <button type="submit" class="btn-logout">Sign Out</button>
       </form>
@@ -49,6 +56,17 @@
       </div>
 
       <div class="sidebar-section">
+        <p class="sidebar-heading">Date Range</p>
+        <div class="date-range-wrap">
+          <label class="date-label">From Day</label>
+          <input type="number" id="dateFrom" class="date-input" min="1" value="1" placeholder="1" />
+          <label class="date-label" style="margin-top:8px">To Day</label>
+          <input type="number" id="dateTo" class="date-input" min="1" value="31" placeholder="31" />
+          <button class="btn-apply-date" id="applyDateBtn">Apply</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
         <p class="sidebar-heading">Show Products</p>
         <div id="productToggles" class="product-toggles"></div>
       </div>
@@ -57,7 +75,6 @@
     <!-- Main Content -->
     <main class="main-content">
 
-      <!-- Loading / Error states -->
       <div id="loadingState" class="state-overlay">
         <div class="spinner"></div>
         <p>Fetching data from Google Sheets...</p>
@@ -68,7 +85,6 @@
         <button class="btn-retry" onclick="loadData()">Retry</button>
       </div>
 
-      <!-- Dashboard Content (hidden until data loads) -->
       <div id="dashboardContent" style="display:none;">
 
         <!-- Stat Cards -->
@@ -106,7 +122,7 @@
           </div>
         </div>
 
-        <!-- Bottom Grid: Table + Top/Worst -->
+        <!-- Bottom Grid -->
         <div class="bottom-grid">
 
           <!-- Product Table -->
@@ -120,7 +136,6 @@
                   <th>Product</th>
                   <th>Avg ROAS</th>
                   <th>Rating</th>
-                  <th>Trend</th>
                 </tr>
               </thead>
               <tbody id="perfTableBody"></tbody>
