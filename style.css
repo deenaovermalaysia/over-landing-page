@@ -176,3 +176,41 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .cal-status--ready{color:var(--text);font-weight:600;}
 .cal-apply-btn{padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .2s;flex-shrink:0;}
 .cal-apply-btn:hover{background:var(--accent2);}
+
+/* ── Paste these at the very bottom of style.css ── */
+
+/* Apply button + status row */
+.cal-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);gap:8px;}
+.cal-status{font-size:.74rem;color:var(--muted);flex:1;}
+.cal-status--ready{color:var(--text);font-weight:600;}
+.cal-apply-btn{padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .2s;flex-shrink:0;}
+.cal-apply-btn:hover{background:var(--accent2);}
+
+/* Today highlight */
+.cal-today{
+  background: rgba(245,158,11,.18) !important;
+  color: #fbbf24 !important;
+  font-weight: 700;
+  border: 1px solid rgba(245,158,11,.5);
+}
+/* Future dates — greyed out, not clickable */
+.cal-future{
+  color: #334155 !important;
+  cursor: not-allowed !important;
+  opacity: .45;
+}
+.cal-future:hover{ background: transparent !important; }
+
+/* Today legend row */
+.cal-legend-row{
+  display:flex;align-items:center;gap:6px;
+  margin-top:8px;padding-top:8px;
+  border-top:1px solid var(--border);
+  font-size:.68rem;color:var(--muted);
+}
+.cal-today-dot{
+  width:9px;height:9px;border-radius:50%;
+  background:rgba(245,158,11,.6);
+  border:1px solid rgba(245,158,11,.8);
+  flex-shrink:0;
+}

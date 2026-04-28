@@ -27,9 +27,43 @@ function roasRating(v) {
 }
 
 function rkey(mi, d) { return mi * 1000 + d; }
-
 function normaliseRange(a, b) {
   return rkey(a.monthIdx,a.day) <= rkey(b.monthIdx,b.day) ? [a,b] : [b,a];
+}
+
+// ── Today info (computed once) ─────────────────────────────────
+const TODAY      = new Date();
+const TODAY_MON  = MONTH_NAMES[TODAY.getMonth()];   // e.g. "April"
+const TODAY_DAY  = TODAY.getDate();                  // e.g. 28
+const TODAY_YEAR = TODAY.getFullYear();
+
+const YEST       = new Date(TODAY); YEST.setDate(TODAY.getDate() - 1);
+const YEST_MON   = MONTH_NAMES[YEST.getMonth()];
+const YEST_DAY   = YEST.getDate();
+
+// Is a given {monthIdx, day} in the future (no data yet)?
+function isFuture(monthIdx, day) {
+  const md = state.allData[monthIdx];
+  if (!md) return true;
+  // Compare month name + day vs today
+  const mName = md.monthName;
+  const todayMi = state.allData.findIndex(m => m.monthName === TODAY_MON);
+  if (monthIdx > todayMi && todayMi !== -1) return true;   // future month
+  if (monthIdx < todayMi || todayMi === -1) return false;  // past month
+  return day >= TODAY_DAY;  // same month — today and beyond = no data
+}
+
+// Is this {monthIdx, day} == today?
+function isToday(monthIdx, day) {
+  const md = state.allData[monthIdx];
+  if (!md) return false;
+  return md.monthName === TODAY_MON && day === TODAY_DAY;
+}
+
+// ── Is current selection a single day? ────────────────────────
+function isSingleDay() {
+  return state.rangeStart.monthIdx === state.rangeEnd.monthIdx &&
+         state.rangeStart.day      === state.rangeEnd.day;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -38,12 +72,11 @@ function normaliseRange(a, b) {
 const cal = {
   open:      false,
   viewIdx:   0,
-  phase:    'start',  // 'start' | 'end'
+  phase:    'start',
   tempStart: null,
   tempEnd:   null,
 };
 
-// ── Open / Close ───────────────────────────────────────────────
 function openCalendar() {
   cal.viewIdx   = state.rangeStart.monthIdx;
   cal.tempStart = { ...state.rangeStart };
@@ -55,9 +88,8 @@ function openCalendar() {
   const rect    = trigger.getBoundingClientRect();
   const popup   = document.getElementById('calPopup');
   popup.style.top  = (rect.bottom + 6) + 'px';
-  popup.style.left = Math.min(rect.left, window.innerWidth - 290) + 'px';
+  popup.style.left = Math.min(rect.left, window.innerWidth - 295) + 'px';
   popup.style.display = 'block';
-
   buildCal();
 }
 
@@ -67,17 +99,11 @@ function closeCal() {
   if (p) p.style.display = 'none';
 }
 
-// ── Outside-click using COORDINATES (not DOM node) ─────────────
-// This is the key fix: innerHTML rebuild destroys the clicked node
-// so popup.contains(e.target) always returns false after rebuild.
+// Coord-based outside-click — safe after innerHTML rebuild
 document.addEventListener('click', function(e) {
   if (!cal.open) return;
-
-  // Ignore clicks on the trigger itself
   const trigger = document.getElementById('dateRangeTrigger');
   if (trigger && trigger.contains(e.target)) return;
-
-  // Use bounding rect so a rebuilt innerHTML doesn't fool us
   const popup = document.getElementById('calPopup');
   if (!popup) return;
   const r = popup.getBoundingClientRect();
@@ -86,7 +112,6 @@ document.addEventListener('click', function(e) {
   if (!inside) closeCal();
 });
 
-// ── Build calendar HTML ────────────────────────────────────────
 function buildCal() {
   const popup = document.getElementById('calPopup');
   const md    = state.allData[cal.viewIdx];
@@ -96,7 +121,6 @@ function buildCal() {
   const isFirst = cal.viewIdx === 0;
   const isLast  = cal.viewIdx === state.allData.length - 1;
 
-  // First day-of-week of this month
   let dow = 0, yearStr = '';
   try {
     const p = md.dates[0].split('/');
@@ -108,31 +132,39 @@ function buildCal() {
   let grid = '';
   for (let i = 0; i < dow; i++) grid += '<div class="cal-cell cal-empty"></div>';
   for (let d = 1; d <= max; d++) {
-    const cls = getDayCls(d, cal.viewIdx);
-    grid += `<div class="cal-cell ${cls}" onclick="calDay(${d})">${d}</div>`;
+    const future  = isFuture(cal.viewIdx, d);
+    const todayMk = isToday(cal.viewIdx, d);
+    const selCls  = future ? '' : getDayCls(d, cal.viewIdx);
+    const todayCls= todayMk ? ' cal-today' : '';
+    const futCls  = future  ? ' cal-future' : '';
+    const onclick = future  ? '' : `onclick="calDay(${d})"`;
+    grid += `<div class="cal-cell ${selCls}${todayCls}${futCls}" ${onclick}>${d}</div>`;
   }
 
-  // Status + Apply button
+  // Footer status + apply button
   const ts = cal.tempStart, te = cal.tempEnd;
   let statusHtml = '<span class="cal-status">① Click a start date</span>';
   let applyBtn   = '';
 
-  if (ts && cal.phase === 'end' && !te) {
+  if (ts && cal.phase==='end' && !te) {
     const tsName = (state.allData[ts.monthIdx]?.monthName||'').slice(0,3);
-    statusHtml = `<span class="cal-status">${tsName} ${ts.day} &rarr; ② Click end date</span>`;
+    statusHtml = `<span class="cal-status">${tsName} ${ts.day} &rarr; ② Click end date (or same day)</span>`;
   } else if (ts && te) {
-    const [lo, hi] = normaliseRange(ts, te);
-    const loName   = (state.allData[lo.monthIdx]?.monthName||'').slice(0,3);
-    const hiName   = (state.allData[hi.monthIdx]?.monthName||'').slice(0,3);
-    const sameDay  = lo.monthIdx===hi.monthIdx && lo.day===hi.day;
-    const label    = sameDay
-      ? `${loName} ${lo.day}`
+    const [lo,hi] = normaliseRange(ts,te);
+    const loN = (state.allData[lo.monthIdx]?.monthName||'').slice(0,3);
+    const hiN = (state.allData[hi.monthIdx]?.monthName||'').slice(0,3);
+    const same = lo.monthIdx===hi.monthIdx && lo.day===hi.day;
+    const lbl  = same
+      ? `${loN} ${lo.day} (single day)`
       : lo.monthIdx===hi.monthIdx
-        ? `${loName} ${lo.day} – ${hi.day}`
-        : `${loName} ${lo.day} – ${hiName} ${hi.day}`;
-    statusHtml = `<span class="cal-status cal-status--ready">${label}</span>`;
+        ? `${loN} ${lo.day} – ${hi.day}`
+        : `${loN} ${lo.day} – ${hiN} ${hi.day}`;
+    statusHtml = `<span class="cal-status cal-status--ready">${lbl}</span>`;
     applyBtn   = `<button class="cal-apply-btn" onclick="applyCalendar()">Apply</button>`;
   }
+
+  // Today legend
+  const todayLabel = `<span class="cal-today-legend"><span class="cal-today-dot"></span>Today (${TODAY_MON.slice(0,3)} ${TODAY_DAY}) — data up to yesterday</span>`;
 
   popup.innerHTML = `
     <div class="cal-head">
@@ -141,17 +173,18 @@ function buildCal() {
       <button class="cal-nav" onclick="calNav(1)"  ${isLast?'disabled':''}>&#8250;</button>
     </div>
     <div class="cal-presets">
-      <button onclick="calPreset('full',${max})">Full Month</button>
+      <button onclick="calPreset('yest')">Yesterday</button>
       <button onclick="calPreset('last7',${max})">Last 7 Days</button>
       <button onclick="calPreset('last14',${max})">Last 14 Days</button>
       <button onclick="calPreset('first7',${max})">First 7 Days</button>
-      <button onclick="calPreset('first14',${max})">First 14 Days</button>
+      <button onclick="calPreset('full',${max})">Full Month</button>
     </div>
     <div class="cal-dow">
       <span>Su</span><span>Mo</span><span>Tu</span><span>We</span>
       <span>Th</span><span>Fr</span><span>Sa</span>
     </div>
     <div class="cal-grid">${grid}</div>
+    <div class="cal-legend-row">${todayLabel}</div>
     <div class="cal-foot">
       ${statusHtml}
       ${applyBtn}
@@ -164,56 +197,60 @@ function getDayCls(day, viewIdx) {
   const key  = rkey(viewIdx, day);
   const sKey = rkey(ts.monthIdx, ts.day);
   const eKey = te ? rkey(te.monthIdx, te.day) : sKey;
-  const lo = Math.min(sKey, eKey), hi = Math.max(sKey, eKey);
-  if (key === lo || key === hi) return 'cal-sel';
-  if (key > lo && key < hi)    return 'cal-range';
+  const lo = Math.min(sKey,eKey), hi = Math.max(sKey,eKey);
+  if (key===lo || key===hi) return 'cal-sel';
+  if (key>lo && key<hi)    return 'cal-range';
   return '';
 }
 
-// ── Navigation ─────────────────────────────────────────────────
 function calNav(dir) {
   const ni = cal.viewIdx + dir;
-  if (ni < 0 || ni >= state.allData.length) return;
+  if (ni<0 || ni>=state.allData.length) return;
   cal.viewIdx = ni;
   buildCal();
 }
 
-// ── Day click — two-click selection, then Apply ────────────────
 function calDay(day) {
-  if (cal.phase === 'start') {
-    // First click: set start, clear end
-    cal.tempStart = { monthIdx: cal.viewIdx, day };
+  if (isFuture(cal.viewIdx, day)) return; // safety guard
+  if (cal.phase==='start') {
+    cal.tempStart = { monthIdx:cal.viewIdx, day };
     cal.tempEnd   = null;
     cal.phase     = 'end';
   } else {
-    // Second click: set end
-    cal.tempEnd = { monthIdx: cal.viewIdx, day };
+    cal.tempEnd = { monthIdx:cal.viewIdx, day };
     cal.phase   = 'start';
-    // Allow single-day: if same coords just keep as-is
   }
   buildCal();
 }
 
-// ── Presets — auto-apply immediately ──────────────────────────
 function calPreset(type, max) {
-  const mi = cal.viewIdx;
-  switch(type) {
-    case 'full':    cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:max};            break;
-    case 'last7':   cal.tempStart={monthIdx:mi,day:Math.max(1,max-6)};  cal.tempEnd={monthIdx:mi,day:max};       break;
-    case 'last14':  cal.tempStart={monthIdx:mi,day:Math.max(1,max-13)}; cal.tempEnd={monthIdx:mi,day:max};       break;
-    case 'first7':  cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:Math.min(7,max)};  break;
-    case 'first14': cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:Math.min(14,max)}; break;
+  // "Yesterday" preset — find yesterday's month in data
+  if (type==='yest') {
+    let mi = state.allData.findIndex(m=>m.monthName===YEST_MON);
+    if (mi<0) mi = state.allData.length-1;
+    const md  = state.allData[mi];
+    const day = md ? Math.min(YEST_DAY, md.dates.length) : 1;
+    cal.tempStart = { monthIdx:mi, day };
+    cal.tempEnd   = { monthIdx:mi, day };
+    cal.phase='start'; applyCalendar(); return;
   }
-  cal.phase = 'start';
-  applyCalendar(); // presets apply immediately
+  const mi = cal.viewIdx;
+  // For last-N presets, cap at yesterday if we're in current month
+  const todayMi = state.allData.findIndex(m=>m.monthName===TODAY_MON);
+  const capDay  = (mi===todayMi) ? Math.min(max, YEST_DAY) : max;
+  switch(type) {
+    case 'full':    cal.tempStart={monthIdx:mi,day:1};                      cal.tempEnd={monthIdx:mi,day:capDay};              break;
+    case 'last7':   cal.tempStart={monthIdx:mi,day:Math.max(1,capDay-6)};   cal.tempEnd={monthIdx:mi,day:capDay};              break;
+    case 'last14':  cal.tempStart={monthIdx:mi,day:Math.max(1,capDay-13)};  cal.tempEnd={monthIdx:mi,day:capDay};              break;
+    case 'first7':  cal.tempStart={monthIdx:mi,day:1};                      cal.tempEnd={monthIdx:mi,day:Math.min(7,capDay)};  break;
+  }
+  cal.phase='start'; applyCalendar();
 }
 
-// ── Apply ──────────────────────────────────────────────────────
 function applyCalendar() {
-  if (!cal.tempStart || !cal.tempEnd) return;
-  const [lo, hi] = normaliseRange(cal.tempStart, cal.tempEnd);
-  state.rangeStart = lo;
-  state.rangeEnd   = hi;
+  if (!cal.tempStart||!cal.tempEnd) return;
+  const [lo,hi] = normaliseRange(cal.tempStart,cal.tempEnd);
+  state.rangeStart = lo; state.rangeEnd = hi;
   updateTriggerLabel();
   closeCal();
   renderDashboard();
@@ -223,33 +260,26 @@ function applyCalendar() {
 function updateTriggerLabel() {
   const el = document.getElementById('dateRangeLabel');
   if (!el) return;
-  const rs = state.rangeStart, re = state.rangeEnd;
-  const sm = (state.allData[rs.monthIdx]?.monthName||'').slice(0,3);
-  const em = (state.allData[re.monthIdx]?.monthName||'').slice(0,3);
+  const rs=state.rangeStart, re=state.rangeEnd;
+  const sm=(state.allData[rs.monthIdx]?.monthName||'').slice(0,3);
+  const em=(state.allData[re.monthIdx]?.monthName||'').slice(0,3);
   if (rs.monthIdx===re.monthIdx && rs.day===re.day) {
-    el.textContent = `${sm} ${rs.day}`;
+    el.textContent=`${sm} ${rs.day}`;
   } else if (rs.monthIdx===re.monthIdx) {
-    el.textContent = `${sm} ${rs.day} – ${re.day}`;
+    el.textContent=`${sm} ${rs.day} – ${re.day}`;
   } else {
-    el.textContent = `${sm} ${rs.day} – ${em} ${re.day}`;
+    el.textContent=`${sm} ${rs.day} – ${em} ${re.day}`;
   }
 }
 
-// ── Default: current month, day 1 → yesterday ─────────────────
+// ── Default: yesterday ─────────────────────────────────────────
 function setDefaultRange() {
-  const today = new Date();
-  const yest  = new Date(today); yest.setDate(today.getDate() - 1);
-  const yDay  = yest.getDate();
-  const yMon  = MONTH_NAMES[yest.getMonth()];
-
-  let mi = state.allData.findIndex(m => m.monthName === yMon);
-  if (mi < 0) mi = state.allData.length - 1;
-
+  let mi = state.allData.findIndex(m=>m.monthName===YEST_MON);
+  if (mi<0) mi = state.allData.length-1;
   const md  = state.allData[mi];
-  const day = md ? Math.min(yDay, md.dates.length) : 1;
-
-  state.rangeStart = { monthIdx: mi, day: 1   };
-  state.rangeEnd   = { monthIdx: mi, day: day  };
+  const day = md ? Math.min(YEST_DAY, md.dates.length) : 1;
+  state.rangeStart = { monthIdx:mi, day };
+  state.rangeEnd   = { monthIdx:mi, day };
   updateTriggerLabel();
 }
 
@@ -257,166 +287,156 @@ function setDefaultRange() {
 // CROSS-MONTH SLICE
 // ═══════════════════════════════════════════════════════════════
 function getCrossMonthSlice() {
-  const rs = state.rangeStart, re = state.rangeEnd;
+  const rs=state.rangeStart, re=state.rangeEnd;
   if (!state.allData.length) return { dates:[], products:[], grandTotal:{avgROAS:0,dailyROAS:[]} };
 
-  let allDates = [], gtDaily = [];
-  const productMap = {};
+  let allDates=[], gtDaily=[];
+  const productMap={};
 
-  for (let mi = rs.monthIdx; mi <= re.monthIdx; mi++) {
-    const md = state.allData[mi];
-    if (!md) continue;
-    const from = (mi === rs.monthIdx) ? rs.day - 1 : 0;
-    const to   = (mi === re.monthIdx) ? re.day     : md.dates.length;
-
-    allDates = allDates.concat(md.dates.slice(from, to));
-    gtDaily  = gtDaily.concat(md.grandTotal.dailyROAS.slice(from, to));
-
-    md.products.forEach(p => {
-      if (!productMap[p.name]) productMap[p.name] = { name:p.name, dailyROAS:[] };
-      productMap[p.name].dailyROAS = productMap[p.name].dailyROAS.concat(
-        p.dailyROAS.slice(from, to)
-      );
+  for (let mi=rs.monthIdx; mi<=re.monthIdx; mi++) {
+    const md=state.allData[mi]; if (!md) continue;
+    const from=(mi===rs.monthIdx) ? rs.day-1 : 0;
+    const to  =(mi===re.monthIdx) ? re.day   : md.dates.length;
+    allDates=allDates.concat(md.dates.slice(from,to));
+    gtDaily =gtDaily.concat(md.grandTotal.dailyROAS.slice(from,to));
+    md.products.forEach(p=>{
+      if (!productMap[p.name]) productMap[p.name]={name:p.name,dailyROAS:[]};
+      productMap[p.name].dailyROAS=productMap[p.name].dailyROAS.concat(p.dailyROAS.slice(from,to));
     });
   }
 
-  const products = Object.values(productMap).map(p => {
-    const valid = p.dailyROAS.filter(v => v!==null && v>0);
-    return { ...p, avgROAS: valid.length ? valid.reduce((a,b)=>a+b,0)/valid.length : 0 };
+  const products=Object.values(productMap).map(p=>{
+    const valid=p.dailyROAS.filter(v=>v!==null&&v>0);
+    return {...p,avgROAS:valid.length?valid.reduce((a,b)=>a+b,0)/valid.length:0};
   });
-
-  const gtV = gtDaily.filter(v => v!==null && v>0);
+  const gtV=gtDaily.filter(v=>v!==null&&v>0);
   return {
-    dates: allDates,
-    products,
-    grandTotal: {
-      avgROAS:   gtV.length ? gtV.reduce((a,b)=>a+b,0)/gtV.length : 0,
-      dailyROAS: gtDaily,
-    },
+    dates:allDates, products,
+    grandTotal:{avgROAS:gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0, dailyROAS:gtDaily},
   };
 }
 
 function getFullMonthSlice(md) {
-  const products = md.products.map(p => {
-    const valid = p.dailyROAS.filter(v=>v!==null&&v>0);
-    return { ...p, avgROAS: valid.length ? valid.reduce((a,b)=>a+b,0)/valid.length : 0 };
+  const products=md.products.map(p=>{
+    const v=p.dailyROAS.filter(v=>v!==null&&v>0);
+    return {...p,avgROAS:v.length?v.reduce((a,b)=>a+b,0)/v.length:0};
   });
-  const gtV = md.grandTotal.dailyROAS.filter(v=>v!==null&&v>0);
-  return {
-    dates: md.dates, products,
-    grandTotal: { avgROAS: gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0, dailyROAS:md.grandTotal.dailyROAS },
-  };
+  const gtV=md.grandTotal.dailyROAS.filter(v=>v!==null&&v>0);
+  return {dates:md.dates,products,grandTotal:{
+    avgROAS:gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0,dailyROAS:md.grandTotal.dailyROAS}};
 }
 
 // ═══════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.platform-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.platform-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
       document.querySelectorAll('.platform-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
-      state.currentTab = btn.dataset.tab;
+      state.currentTab=btn.dataset.tab;
       state.hiddenProducts.clear();
       loadData();
     });
   });
 
-  document.getElementById('dateRangeTrigger').addEventListener('click', openCalendar);
+  document.getElementById('dateRangeTrigger').addEventListener('click',openCalendar);
 
-  document.getElementById('toggleAll').addEventListener('change', e => {
-    const allNames = new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
+  document.getElementById('toggleAll').addEventListener('change',e=>{
+    const allNames=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
     if (e.target.checked) state.hiddenProducts.clear();
     else allNames.forEach(n=>state.hiddenProducts.add(n));
     renderDashboard();
   });
 
-  setInterval(() => loadData(true), 5 * 60 * 1000);
+  setInterval(()=>loadData(true),5*60*1000);
   loadData();
 });
 
 // ═══════════════════════════════════════════════════════════════
 // FETCH
 // ═══════════════════════════════════════════════════════════════
-function manualRefresh() {
-  const btn=document.getElementById('refreshBtn'), icon=document.getElementById('refreshIcon');
+function manualRefresh(){
+  const btn=document.getElementById('refreshBtn'),icon=document.getElementById('refreshIcon');
   btn.disabled=true; icon.classList.add('spinning');
-  loadData(false).finally(()=>{ btn.disabled=false; icon.classList.remove('spinning'); });
+  loadData(false).finally(()=>{btn.disabled=false;icon.classList.remove('spinning');});
 }
 
-async function loadData(silent=false) {
+async function loadData(silent=false){
   if (!silent) showState('loading');
   try {
-    const res  = await fetch(`/api/roas?tab=${state.currentTab}`, { credentials:'same-origin' });
-    if (res.status===401) { window.location.href='/login.html'; return; }
-    const json = await res.json();
-    if (!res.ok || !json.success) throw new Error(json.detail||json.error||'Unknown');
+    const res=await fetch(`/api/roas?tab=${state.currentTab}`,{credentials:'same-origin'});
+    if (res.status===401){window.location.href='/login.html';return;}
+    const json=await res.json();
+    if (!res.ok||!json.success) throw new Error(json.detail||json.error||'Unknown');
 
-    state.allData = json.data;
-
-    const now = new Date();
-    document.getElementById('lastUpdated').textContent =
-      now.toLocaleDateString('en-MY',{day:'2-digit',month:'short'}) + ' ' +
+    state.allData=json.data;
+    const now=new Date();
+    document.getElementById('lastUpdated').textContent=
+      now.toLocaleDateString('en-MY',{day:'2-digit',month:'short'})+' '+
       now.toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'});
 
+    // Set default only on first load
     if (!state.allData[state.rangeStart.monthIdx]) setDefaultRange();
     else updateTriggerLabel();
 
-    if (state.compareMonths.size===0) {
-      json.data.forEach(m=>state.compareMonths.add(m.monthName));
-    }
+    if (state.compareMonths.size===0) json.data.forEach(m=>state.compareMonths.add(m.monthName));
 
     showState('content');
     renderDashboard();
     renderCompare();
-  } catch(err) {
+  } catch(err){
     console.error(err);
-    if (!silent) { document.getElementById('errorMsg').textContent=err.message; showState('error'); }
+    if (!silent){document.getElementById('errorMsg').textContent=err.message;showState('error');}
   }
 }
 
-function showState(w) {
-  document.getElementById('loadingState').style.display     = w==='loading'?'flex':'none';
-  document.getElementById('errorState').style.display       = w==='error'  ?'flex':'none';
-  document.getElementById('dashboardContent').style.display = w==='content'?'block':'none';
+function showState(w){
+  document.getElementById('loadingState').style.display    =w==='loading'?'flex':'none';
+  document.getElementById('errorState').style.display      =w==='error'  ?'flex':'none';
+  document.getElementById('dashboardContent').style.display=w==='content'?'block':'none';
 }
 
 // ═══════════════════════════════════════════════════════════════
-// RENDER
+// RENDER DASHBOARD
 // ═══════════════════════════════════════════════════════════════
-function renderDashboard() {
-  const slice = getCrossMonthSlice();
-  const allProducts = state.allData.flatMap(m=>m.products)
+function renderDashboard(){
+  const slice=getCrossMonthSlice();
+  const allProducts=state.allData.flatMap(m=>m.products)
     .filter((p,i,a)=>a.findIndex(x=>x.name===p.name)===i);
-  renderToggles(slice.products, allProducts);
+  renderToggles(slice.products,allProducts);
   renderStats(slice);
-  renderChart(slice, allProducts);
+  // ── Auto-switch chart type ──────────────────────────────────
+  if (isSingleDay()) renderBarChart(slice, allProducts);
+  else               renderLineChart(slice, allProducts);
   renderTable(slice.products);
   renderRanks(slice.products);
 }
 
-function syncAllCheckbox() {
-  const allNames = new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
-  const cb = document.getElementById('toggleAll');
-  const allOn  = [...allNames].every(n=>!state.hiddenProducts.has(n));
-  const allOff = [...allNames].every(n=> state.hiddenProducts.has(n));
-  cb.checked = allOn; cb.indeterminate = !allOn && !allOff;
+function syncAllCheckbox(){
+  const allNames=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
+  const cb=document.getElementById('toggleAll');
+  const allOn =[...allNames].every(n=>!state.hiddenProducts.has(n));
+  const allOff=[...allNames].every(n=> state.hiddenProducts.has(n));
+  cb.checked=allOn; cb.indeterminate=!allOn&&!allOff;
 }
 
-function renderToggles(products, allProducts) {
-  const c = document.getElementById('productToggles'); c.innerHTML='';
-  products.forEach(p => {
-    const idx   = allProducts.findIndex(ap=>ap.name===p.name);
-    const color = CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0];
-    const hidden = state.hiddenProducts.has(p.name);
-    const label = document.createElement('label');
-    label.className = 'toggle-item'+(hidden?'':' active');
-    label.innerHTML = `<input type="checkbox" ${hidden?'':'checked'}/>
+function renderToggles(products,allProducts){
+  const c=document.getElementById('productToggles'); c.innerHTML='';
+  products.forEach(p=>{
+    const idx  =allProducts.findIndex(ap=>ap.name===p.name);
+    const color=CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0];
+    const hidden=state.hiddenProducts.has(p.name);
+    const label=document.createElement('label');
+    label.className='toggle-item'+(hidden?'':' active');
+    label.innerHTML=`<input type="checkbox" ${hidden?'':'checked'}/>
       <span class="toggle-dot" style="background:${color}"></span>${p.name}`;
-    label.querySelector('input').addEventListener('change', e => {
-      if (e.target.checked) { state.hiddenProducts.delete(p.name); label.classList.add('active'); }
-      else                  { state.hiddenProducts.add(p.name);    label.classList.remove('active'); }
-      renderChart(getCrossMonthSlice(), allProducts);
+    label.querySelector('input').addEventListener('change',e=>{
+      if (e.target.checked){state.hiddenProducts.delete(p.name);label.classList.add('active');}
+      else                 {state.hiddenProducts.add(p.name);   label.classList.remove('active');}
+      const slice=getCrossMonthSlice();
+      if (isSingleDay()) renderBarChart(slice,allProducts);
+      else               renderLineChart(slice,allProducts);
       syncAllCheckbox();
     });
     c.appendChild(label);
@@ -424,37 +444,34 @@ function renderToggles(products, allProducts) {
   syncAllCheckbox();
 }
 
-function renderStats(slice) {
-  const { products, grandTotal, dates } = slice;
-  document.getElementById('statAvg').textContent    = fmt(grandTotal.avgROAS);
-  document.getElementById('statAvgSub').textContent = 'Grand total avg';
-  const sorted = [...products].sort((a,b)=>b.avgROAS-a.avgROAS);
-  const top=sorted[0], worst=sorted[sorted.length-1];
-  document.getElementById('statTop').textContent    = top   ? top.name   : '—';
-  document.getElementById('statTopSub').textContent = top   ? `ROAS: ${fmt(top.avgROAS)}` : '';
-  document.getElementById('statLow').textContent    = worst ? worst.name : '—';
-  document.getElementById('statLowSub').textContent = worst ? `ROAS: ${fmt(worst.avgROAS)}` : '';
-  const active = grandTotal.dailyROAS.filter(v=>v!==null&&v>0).length;
-  document.getElementById('statDays').textContent    = active;
-  document.getElementById('statDaysSub').textContent = `of ${dates.length} days`;
+function renderStats(slice){
+  const {products,grandTotal,dates}=slice;
+  document.getElementById('statAvg').textContent   =fmt(grandTotal.avgROAS);
+  document.getElementById('statAvgSub').textContent='Grand total avg';
+  const sorted=[...products].sort((a,b)=>b.avgROAS-a.avgROAS);
+  const top=sorted[0],worst=sorted[sorted.length-1];
+  document.getElementById('statTop').textContent   =top  ?top.name  :'—';
+  document.getElementById('statTopSub').textContent=top  ?`ROAS: ${fmt(top.avgROAS)}`  :'';
+  document.getElementById('statLow').textContent   =worst?worst.name:'—';
+  document.getElementById('statLowSub').textContent=worst?`ROAS: ${fmt(worst.avgROAS)}`:'';
+  const active=grandTotal.dailyROAS.filter(v=>v!==null&&v>0).length;
+  document.getElementById('statDays').textContent   =active;
+  document.getElementById('statDaysSub').textContent=`of ${dates.length} day${dates.length!==1?'s':''}`;
 }
 
-function renderChart(slice, allProducts) {
+// ── LINE CHART — for date ranges ───────────────────────────────
+function renderLineChart(slice, allProducts){
   if (state.chartInstance) state.chartInstance.destroy();
-  const { dates, products, grandTotal } = slice;
-  const ctx     = document.getElementById('roasChart').getContext('2d');
-  const visible = products.filter(p=>!state.hiddenProducts.has(p.name));
-  const labels  = dates.map(d=>{ const p=d.split('/'); return p.length>=2?`${p[0]}/${p[1]}`:d; });
+  const {dates,products,grandTotal}=slice;
+  const ctx    =document.getElementById('roasChart').getContext('2d');
+  const visible=products.filter(p=>!state.hiddenProducts.has(p.name));
+  const labels =dates.map(d=>{const p=d.split('/');return p.length>=2?`${p[0]}/${p[1]}`:d;});
 
-  const datasets = visible.map(p => {
-    const idx = (allProducts||products).findIndex(ap=>ap.name===p.name);
-    return {
-      label:p.name,
-      data:p.dailyROAS.map(v=>v===null?null:v),
+  const datasets=visible.map(p=>{
+    const idx=(allProducts||products).findIndex(ap=>ap.name===p.name);
+    return {label:p.name,data:p.dailyROAS.map(v=>v===null?null:v),
       borderColor:CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0],
-      backgroundColor:'transparent',
-      borderWidth:2,pointRadius:2,pointHoverRadius:5,tension:0.3,spanGaps:false,
-    };
+      backgroundColor:'transparent',borderWidth:2,pointRadius:2,pointHoverRadius:5,tension:0.3,spanGaps:false};
   });
   datasets.push({label:'Grand Total',data:grandTotal.dailyROAS.map(v=>v===null?null:v),
     borderColor:'#f1f5f9',backgroundColor:'transparent',
@@ -463,12 +480,8 @@ function renderChart(slice, allProducts) {
     {label:'— Good (3.0)',      data:Array(labels.length).fill(3),borderColor:'rgba(34,197,94,.45)',  borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0,backgroundColor:'transparent'},
     {label:'— Excellent (5.0)',data:Array(labels.length).fill(5),borderColor:'rgba(168,85,247,.45)',borderWidth:1,borderDash:[4,4],pointRadius:0,tension:0,backgroundColor:'transparent'}
   );
-
-  document.getElementById('chartBadge').textContent =
-    document.getElementById('dateRangeLabel').textContent + ' · ' +
-    (state.currentTab==='MY'?'MY Website':state.currentTab==='SG'?'SG Website':'Marketplace');
-
-  state.chartInstance = new Chart(ctx,{type:'line',data:{labels,datasets},options:{
+  updateChartBadge();
+  state.chartInstance=new Chart(ctx,{type:'line',data:{labels,datasets},options:{
     responsive:true,maintainAspectRatio:false,
     interaction:{mode:'index',intersect:false},
     plugins:{
@@ -484,7 +497,64 @@ function renderChart(slice, allProducts) {
   }});
 }
 
-function renderTable(products) {
+// ── BAR CHART — for single day ─────────────────────────────────
+function renderBarChart(slice, allProducts){
+  if (state.chartInstance) state.chartInstance.destroy();
+  const {products}=slice;
+  const ctx    =document.getElementById('roasChart').getContext('2d');
+  const visible=products.filter(p=>!state.hiddenProducts.has(p.name));
+
+  const labels  = visible.map(p=>p.name);
+  const values  = visible.map(p=>+p.avgROAS.toFixed(2));
+  const colors  = visible.map(p=>{
+    const idx=(allProducts||products).findIndex(ap=>ap.name===p.name);
+    return CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0];
+  });
+
+  // Reference lines data
+  const goodLine = { label:'Good (3.0)',      data:Array(labels.length).fill(3), type:'line',borderColor:'rgba(34,197,94,.5)',  borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0 };
+  const excLine  = { label:'Excellent (5.0)', data:Array(labels.length).fill(5), type:'line',borderColor:'rgba(168,85,247,.5)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0 };
+
+  updateChartBadge();
+  state.chartInstance=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[{
+        label:'ROAS',
+        data:values,
+        backgroundColor:colors.map(c=>c+'BB'),
+        borderColor:colors,
+        borderWidth:1,
+        borderRadius:6,
+      }, goodLine, excLine],
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
+          titleColor:'#f1f5f9',bodyColor:'#94a3b8',
+          callbacks:{
+            title:items=>items[0]?.label||'',
+            label:c=>c.dataset.type==='line'?` ${c.dataset.label}`:` ROAS: ${fmt(c.parsed.y)}`,
+          }},
+      },
+      scales:{
+        x:{ticks:{color:'#94a3b8',font:{size:11}},grid:{color:'#1e293b'}},
+        y:{beginAtZero:true,ticks:{color:'#64748b',callback:v=>fmt(v)},grid:{color:'#273549'}},
+      },
+    },
+  });
+}
+
+function updateChartBadge(){
+  document.getElementById('chartBadge').textContent=
+    document.getElementById('dateRangeLabel').textContent+' · '+
+    (state.currentTab==='MY'?'MY Website':state.currentTab==='SG'?'SG Website':'Marketplace');
+}
+
+function renderTable(products){
   const tbody=document.getElementById('perfTableBody'); tbody.innerHTML='';
   products.forEach(p=>{
     const {label,cls}=roasRating(p.avgROAS);
@@ -496,12 +566,12 @@ function renderTable(products) {
   });
 }
 
-function renderRanks(products) {
+function renderRanks(products){
   const s=[...products].sort((a,b)=>b.avgROAS-a.avgROAS);
-  renderRankList('top5List',   s.slice(0,5));
-  renderRankList('worst5List', s.slice(-5).reverse());
+  renderRankList('top5List',  s.slice(0,5));
+  renderRankList('worst5List',s.slice(-5).reverse());
 }
-function renderRankList(id, items) {
+function renderRankList(id,items){
   const ul=document.getElementById(id); ul.innerHTML='';
   items.forEach((p,i)=>{
     const {cls}=roasRating(p.avgROAS);
@@ -516,43 +586,38 @@ function renderRankList(id, items) {
 // ═══════════════════════════════════════════════════════════════
 // COMPARE
 // ═══════════════════════════════════════════════════════════════
-function renderCompare() {
-  const selected  = [...state.compareMonths];
-  const noData    = document.getElementById('compareNoData');
-  const chartWrap = document.getElementById('compareChartWrap');
-  const tableWrap = document.getElementById('compareTableWrap');
-
+function renderCompare(){
+  const selected =[...state.compareMonths];
+  const noData   =document.getElementById('compareNoData');
+  const chartWrap=document.getElementById('compareChartWrap');
+  const tableWrap=document.getElementById('compareTableWrap');
   buildComparePicker();
 
-  if (selected.length < 2) {
-    noData.style.display='flex'; chartWrap.style.display='none'; tableWrap.style.display='none';
-    document.getElementById('compareNoMsg').textContent =
-      selected.length===0 ? 'Select at least 2 months.' : 'Select one more month.';
+  if (selected.length<2){
+    noData.style.display='flex';chartWrap.style.display='none';tableWrap.style.display='none';
+    document.getElementById('compareNoMsg').textContent=
+      selected.length===0?'Select at least 2 months.':'Select one more month.';
     return;
   }
-  noData.style.display='none'; chartWrap.style.display='block'; tableWrap.style.display='block';
+  noData.style.display='none';chartWrap.style.display='block';tableWrap.style.display='block';
 
-  const monthsData = selected.map(name=>{
-    const md  = state.allData.find(m=>m.monthName===name);
-    const idx = state.allData.indexOf(md);
-    return md ? { name, color:MONTH_COLORS[idx%MONTH_COLORS.length], slice:getFullMonthSlice(md) } : null;
+  const monthsData=selected.map(name=>{
+    const md =state.allData.find(m=>m.monthName===name);
+    const idx=state.allData.indexOf(md);
+    return md?{name,color:MONTH_COLORS[idx%MONTH_COLORS.length],slice:getFullMonthSlice(md)}:null;
   }).filter(Boolean);
 
-  const allNames = [...new Set(monthsData.flatMap(m=>m.slice.products.map(p=>p.name)))];
+  const allNames=[...new Set(monthsData.flatMap(m=>m.slice.products.map(p=>p.name)))];
 
   if (state.compareChart) state.compareChart.destroy();
-  const ctx = document.getElementById('compareChart').getContext('2d');
-  state.compareChart = new Chart(ctx,{type:'bar',
-    data:{
-      labels:allNames,
-      datasets:monthsData.map(md=>({
-        label:md.name,
-        data:allNames.map(n=>{ const p=md.slice.products.find(p=>p.name===n); return p?+p.avgROAS.toFixed(2):0; }),
-        backgroundColor:md.color+'BB',borderColor:md.color,borderWidth:1,borderRadius:4,
-      })),
-    },
-    options:{
-      responsive:true,maintainAspectRatio:false,
+  const ctx=document.getElementById('compareChart').getContext('2d');
+  state.compareChart=new Chart(ctx,{type:'bar',
+    data:{labels:allNames,datasets:monthsData.map(md=>({
+      label:md.name,
+      data:allNames.map(n=>{const p=md.slice.products.find(p=>p.name===n);return p?+p.avgROAS.toFixed(2):0;}),
+      backgroundColor:md.color+'BB',borderColor:md.color,borderWidth:1,borderRadius:4,
+    }))},
+    options:{responsive:true,maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
       plugins:{
         legend:{position:'top',labels:{color:'#94a3b8',font:{size:11},padding:16}},
@@ -572,7 +637,7 @@ function renderCompare() {
   thead.innerHTML='<tr><th>Product</th>'+monthsData.map(m=>`<th style="color:${m.color}">${m.name}</th>`).join('')+'<th>Best</th></tr>';
   tbody.innerHTML='';
   allNames.forEach(name=>{
-    const vals=monthsData.map(m=>{ const p=m.slice.products.find(p=>p.name===name); return p?p.avgROAS:null; });
+    const vals=monthsData.map(m=>{const p=m.slice.products.find(p=>p.name===name);return p?p.avgROAS:null;});
     const maxV=Math.max(...vals.filter(v=>v!==null));
     const bi  =vals.indexOf(maxV);
     const cells=vals.map((v)=>{
@@ -582,12 +647,12 @@ function renderCompare() {
     tbody.innerHTML+=`<tr><td style="font-weight:600">${name}</td>${cells}<td><span style="color:${monthsData[bi]?.color};font-weight:700">${maxV>0?(monthsData[bi]?.name||'—'):'—'}</span></td></tr>`;
   });
   const gtV=monthsData.map(m=>m.slice.grandTotal.avgROAS);
-  const gtMax=Math.max(...gtV), gtBi=gtV.indexOf(gtMax);
+  const gtMax=Math.max(...gtV),gtBi=gtV.indexOf(gtMax);
   tbody.innerHTML+=`<tr class="compare-gt"><td style="font-weight:700">Grand Total</td>${gtV.map((v,i)=>`<td class="${v===gtMax?'compare-best':''}"><strong style="color:#f1f5f9">${fmt(v)}</strong></td>`).join('')}<td><span style="color:${monthsData[gtBi]?.color};font-weight:700">${monthsData[gtBi]?.name||'—'}</span></td></tr>`;
 }
 
-function buildComparePicker() {
-  const c = document.getElementById('compareMonthPicker');
+function buildComparePicker(){
+  const c=document.getElementById('compareMonthPicker');
   if (c.children.length===state.allData.length) return;
   c.innerHTML='';
   state.allData.forEach((m,i)=>{
@@ -598,15 +663,15 @@ function buildComparePicker() {
     label.style.setProperty('--mc',color);
     label.innerHTML=`<input type="checkbox" ${checked?'checked':''}><span class="cmp-dot"></span>${m.monthName}`;
     label.querySelector('input').addEventListener('change',e=>{
-      if (e.target.checked) { state.compareMonths.add(m.monthName);    label.classList.add('active'); }
-      else                  { state.compareMonths.delete(m.monthName); label.classList.remove('active'); }
+      if (e.target.checked){state.compareMonths.add(m.monthName);   label.classList.add('active');}
+      else                 {state.compareMonths.delete(m.monthName);label.classList.remove('active');}
       renderCompare();
     });
     c.appendChild(label);
   });
 }
 
-function fmt(n) {
+function fmt(n){
   if (n===null||n===undefined||isNaN(n)) return '—';
   return Number(n).toFixed(2)+'x';
 }
