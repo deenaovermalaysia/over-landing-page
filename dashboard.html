@@ -140,7 +140,10 @@
     <!-- Table + Rankings -->
     <div class="bottom-grid">
       <div class="card">
-        <div class="card-header"><h2 class="card-title">Product Performance</h2></div>
+        <div class="card-header">
+          <h2 class="card-title">Product Performance</h2>
+          <button class="btn-sort" id="sortBtn" onclick="toggleSort()">&#8597; Sort</button>
+        </div>
         <table class="perf-table">
           <thead><tr><th>Product</th><th>Avg ROAS</th><th>Rating</th></tr></thead>
           <tbody id="perfTableBody"></tbody>
