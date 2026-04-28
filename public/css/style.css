@@ -170,3 +170,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
   .bottom-grid{grid-template-columns:1fr;}
   .sidebar{width:185px;}
 }
+/* ── Calendar Apply button & status ── */
+.cal-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);gap:8px;}
+.cal-status{font-size:.74rem;color:var(--muted);flex:1;}
+.cal-status--ready{color:var(--text);font-weight:600;}
+.cal-apply-btn{padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .2s;flex-shrink:0;}
+.cal-apply-btn:hover{background:var(--accent2);}

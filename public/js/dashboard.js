@@ -1,10 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// STATE  — rangeStart/End replace currentMonth+dateFrom+dateTo
+// STATE
 // ═══════════════════════════════════════════════════════════════
 const state = {
   currentTab:     'MY',
   allData:        [],
-  rangeStart:     { monthIdx:0, day:1 },   // { monthIdx, day }
+  rangeStart:     { monthIdx:0, day:1 },
   rangeEnd:       { monthIdx:0, day:1 },
   hiddenProducts: new Set(),
   chartInstance:  null,
@@ -16,9 +16,9 @@ const CHART_COLORS = [
   '#6366f1','#22c55e','#f59e0b','#ef4444','#a855f7',
   '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6','#8b5cf6','#64748b',
 ];
-const MONTH_COLORS  = ['#6366f1','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4'];
-const MONTH_NAMES   = ['January','February','March','April','May','June',
-                       'July','August','September','October','November','December'];
+const MONTH_COLORS = ['#6366f1','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4'];
+const MONTH_NAMES  = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
 
 function roasRating(v) {
   if (v >= 5) return { label:'Excellent', cls:'roas-excellent' };
@@ -26,32 +26,30 @@ function roasRating(v) {
   return           { label:'Poor',       cls:'roas-poor'      };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RANGE KEY HELPER  (monotonic sort key for cross-month compare)
-// ═══════════════════════════════════════════════════════════════
-function rkey(monthIdx, day) { return monthIdx * 1000 + day; }
+function rkey(mi, d) { return mi * 1000 + d; }
 
 function normaliseRange(a, b) {
-  // ensure a <= b
-  if (rkey(a.monthIdx, a.day) <= rkey(b.monthIdx, b.day)) return [a, b];
-  return [b, a];
+  return rkey(a.monthIdx,a.day) <= rkey(b.monthIdx,b.day) ? [a,b] : [b,a];
 }
 
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR
 // ═══════════════════════════════════════════════════════════════
 const cal = {
-  viewIdx:   0,          // which month index is shown in calendar
-  phase:    'start',     // 'start' | 'end'
-  tempStart: null,       // { monthIdx, day }
+  open:      false,
+  viewIdx:   0,
+  phase:    'start',  // 'start' | 'end'
+  tempStart: null,
   tempEnd:   null,
 };
 
+// ── Open / Close ───────────────────────────────────────────────
 function openCalendar() {
   cal.viewIdx   = state.rangeStart.monthIdx;
   cal.tempStart = { ...state.rangeStart };
-  cal.tempEnd   = { ...state.rangeEnd   };
+  cal.tempEnd   = { ...state.rangeEnd };
   cal.phase     = 'start';
+  cal.open      = true;
 
   const trigger = document.getElementById('dateRangeTrigger');
   const rect    = trigger.getBoundingClientRect();
@@ -61,37 +59,52 @@ function openCalendar() {
   popup.style.display = 'block';
 
   buildCal();
-  setTimeout(() => document.addEventListener('click', outsideCal), 10);
-}
-
-function outsideCal(e) {
-  const popup   = document.getElementById('calPopup');
-  const trigger = document.getElementById('dateRangeTrigger');
-  if (popup && !popup.contains(e.target) && !trigger.contains(e.target)) closeCal();
 }
 
 function closeCal() {
+  cal.open = false;
   const p = document.getElementById('calPopup');
   if (p) p.style.display = 'none';
-  document.removeEventListener('click', outsideCal);
 }
 
+// ── Outside-click using COORDINATES (not DOM node) ─────────────
+// This is the key fix: innerHTML rebuild destroys the clicked node
+// so popup.contains(e.target) always returns false after rebuild.
+document.addEventListener('click', function(e) {
+  if (!cal.open) return;
+
+  // Ignore clicks on the trigger itself
+  const trigger = document.getElementById('dateRangeTrigger');
+  if (trigger && trigger.contains(e.target)) return;
+
+  // Use bounding rect so a rebuilt innerHTML doesn't fool us
+  const popup = document.getElementById('calPopup');
+  if (!popup) return;
+  const r = popup.getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right &&
+                 e.clientY >= r.top  && e.clientY <= r.bottom;
+  if (!inside) closeCal();
+});
+
+// ── Build calendar HTML ────────────────────────────────────────
 function buildCal() {
-  const md      = state.allData[cal.viewIdx];
-  if (!md) return;
+  const popup = document.getElementById('calPopup');
+  const md    = state.allData[cal.viewIdx];
+  if (!md || !popup) return;
+
   const max     = md.dates.length;
   const isFirst = cal.viewIdx === 0;
   const isLast  = cal.viewIdx === state.allData.length - 1;
 
-  // Weekday of 1st
+  // First day-of-week of this month
   let dow = 0, yearStr = '';
   try {
     const p = md.dates[0].split('/');
-    yearStr  = p[2] || '';
+    yearStr = p[2] || '';
     if (+p[2] > 2000) dow = new Date(+p[2], +p[1]-1, 1).getDay();
-  } catch(e){}
+  } catch(e) {}
 
-  // Build grid
+  // Day cells
   let grid = '';
   for (let i = 0; i < dow; i++) grid += '<div class="cal-cell cal-empty"></div>';
   for (let d = 1; d <= max; d++) {
@@ -99,29 +112,33 @@ function buildCal() {
     grid += `<div class="cal-cell ${cls}" onclick="calDay(${d})">${d}</div>`;
   }
 
-  // Status line
+  // Status + Apply button
   const ts = cal.tempStart, te = cal.tempEnd;
-  let status = '① Click a start date';
-  if (ts && !te && cal.phase === 'end') {
-    const tsName = (state.allData[ts.monthIdx]?.monthName || '').slice(0,3);
-    status = `${tsName} ${ts.day} → ② Click end date`;
+  let statusHtml = '<span class="cal-status">① Click a start date</span>';
+  let applyBtn   = '';
+
+  if (ts && cal.phase === 'end' && !te) {
+    const tsName = (state.allData[ts.monthIdx]?.monthName||'').slice(0,3);
+    statusHtml = `<span class="cal-status">${tsName} ${ts.day} &rarr; ② Click end date</span>`;
   } else if (ts && te) {
     const [lo, hi] = normaliseRange(ts, te);
-    const loName   = (state.allData[lo.monthIdx]?.monthName || '').slice(0,3);
-    const hiName   = (state.allData[hi.monthIdx]?.monthName || '').slice(0,3);
-    const sameDay  = lo.monthIdx === hi.monthIdx && lo.day === hi.day;
-    status = sameDay
-      ? `${loName} ${lo.day} (single day)`
-      : (lo.monthIdx === hi.monthIdx
-          ? `${loName} ${lo.day} – ${hi.day}`
-          : `${loName} ${lo.day} – ${hiName} ${hi.day}`);
+    const loName   = (state.allData[lo.monthIdx]?.monthName||'').slice(0,3);
+    const hiName   = (state.allData[hi.monthIdx]?.monthName||'').slice(0,3);
+    const sameDay  = lo.monthIdx===hi.monthIdx && lo.day===hi.day;
+    const label    = sameDay
+      ? `${loName} ${lo.day}`
+      : lo.monthIdx===hi.monthIdx
+        ? `${loName} ${lo.day} – ${hi.day}`
+        : `${loName} ${lo.day} – ${hiName} ${hi.day}`;
+    statusHtml = `<span class="cal-status cal-status--ready">${label}</span>`;
+    applyBtn   = `<button class="cal-apply-btn" onclick="applyCalendar()">Apply</button>`;
   }
 
-  document.getElementById('calPopup').innerHTML = `
+  popup.innerHTML = `
     <div class="cal-head">
       <button class="cal-nav" onclick="calNav(-1)" ${isFirst?'disabled':''}>&#8249;</button>
       <span class="cal-title">${md.monthName} ${yearStr}</span>
-      <button class="cal-nav" onclick="calNav(1)"  ${isLast ?'disabled':''}>&#8250;</button>
+      <button class="cal-nav" onclick="calNav(1)"  ${isLast?'disabled':''}>&#8250;</button>
     </div>
     <div class="cal-presets">
       <button onclick="calPreset('full',${max})">Full Month</button>
@@ -130,10 +147,14 @@ function buildCal() {
       <button onclick="calPreset('first7',${max})">First 7 Days</button>
       <button onclick="calPreset('first14',${max})">First 14 Days</button>
     </div>
-    <div class="cal-dow"><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span></div>
+    <div class="cal-dow">
+      <span>Su</span><span>Mo</span><span>Tu</span><span>We</span>
+      <span>Th</span><span>Fr</span><span>Sa</span>
+    </div>
     <div class="cal-grid">${grid}</div>
     <div class="cal-foot">
-      <span class="cal-status">${status}</span>
+      ${statusHtml}
+      ${applyBtn}
     </div>`;
 }
 
@@ -149,6 +170,7 @@ function getDayCls(day, viewIdx) {
   return '';
 }
 
+// ── Navigation ─────────────────────────────────────────────────
 function calNav(dir) {
   const ni = cal.viewIdx + dir;
   if (ni < 0 || ni >= state.allData.length) return;
@@ -156,34 +178,37 @@ function calNav(dir) {
   buildCal();
 }
 
+// ── Day click — two-click selection, then Apply ────────────────
 function calDay(day) {
   if (cal.phase === 'start') {
-    // Start new selection
+    // First click: set start, clear end
     cal.tempStart = { monthIdx: cal.viewIdx, day };
     cal.tempEnd   = null;
     cal.phase     = 'end';
-    buildCal();
   } else {
-    // Complete selection
+    // Second click: set end
     cal.tempEnd = { monthIdx: cal.viewIdx, day };
     cal.phase   = 'start';
-    applyCalendar();
+    // Allow single-day: if same coords just keep as-is
   }
+  buildCal();
 }
 
+// ── Presets — auto-apply immediately ──────────────────────────
 function calPreset(type, max) {
   const mi = cal.viewIdx;
   switch(type) {
-    case 'full':    cal.tempStart={monthIdx:mi,day:1};          cal.tempEnd={monthIdx:mi,day:max};           break;
-    case 'last7':   cal.tempStart={monthIdx:mi,day:Math.max(1,max-6)};  cal.tempEnd={monthIdx:mi,day:max};   break;
-    case 'last14':  cal.tempStart={monthIdx:mi,day:Math.max(1,max-13)}; cal.tempEnd={monthIdx:mi,day:max};   break;
-    case 'first7':  cal.tempStart={monthIdx:mi,day:1};          cal.tempEnd={monthIdx:mi,day:Math.min(7,max)};  break;
-    case 'first14': cal.tempStart={monthIdx:mi,day:1};          cal.tempEnd={monthIdx:mi,day:Math.min(14,max)}; break;
+    case 'full':    cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:max};            break;
+    case 'last7':   cal.tempStart={monthIdx:mi,day:Math.max(1,max-6)};  cal.tempEnd={monthIdx:mi,day:max};       break;
+    case 'last14':  cal.tempStart={monthIdx:mi,day:Math.max(1,max-13)}; cal.tempEnd={monthIdx:mi,day:max};       break;
+    case 'first7':  cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:Math.min(7,max)};  break;
+    case 'first14': cal.tempStart={monthIdx:mi,day:1};              cal.tempEnd={monthIdx:mi,day:Math.min(14,max)}; break;
   }
   cal.phase = 'start';
-  applyCalendar();
+  applyCalendar(); // presets apply immediately
 }
 
+// ── Apply ──────────────────────────────────────────────────────
 function applyCalendar() {
   if (!cal.tempStart || !cal.tempEnd) return;
   const [lo, hi] = normaliseRange(cal.tempStart, cal.tempEnd);
@@ -199,21 +224,18 @@ function updateTriggerLabel() {
   const el = document.getElementById('dateRangeLabel');
   if (!el) return;
   const rs = state.rangeStart, re = state.rangeEnd;
-  const startMd = state.allData[rs.monthIdx];
-  const endMd   = state.allData[re.monthIdx];
-  if (!startMd || !endMd) { el.textContent = 'Select range'; return; }
-  const sm = startMd.monthName.slice(0,3);
-  const em = endMd.monthName.slice(0,3);
-  if (rs.monthIdx === re.monthIdx && rs.day === re.day) {
+  const sm = (state.allData[rs.monthIdx]?.monthName||'').slice(0,3);
+  const em = (state.allData[re.monthIdx]?.monthName||'').slice(0,3);
+  if (rs.monthIdx===re.monthIdx && rs.day===re.day) {
     el.textContent = `${sm} ${rs.day}`;
-  } else if (rs.monthIdx === re.monthIdx) {
+  } else if (rs.monthIdx===re.monthIdx) {
     el.textContent = `${sm} ${rs.day} – ${re.day}`;
   } else {
     el.textContent = `${sm} ${rs.day} – ${em} ${re.day}`;
   }
 }
 
-// ── Default range: current month, day 1 to yesterday ──────────
+// ── Default: current month, day 1 → yesterday ─────────────────
 function setDefaultRange() {
   const today = new Date();
   const yest  = new Date(today); yest.setDate(today.getDate() - 1);
@@ -221,7 +243,7 @@ function setDefaultRange() {
   const yMon  = MONTH_NAMES[yest.getMonth()];
 
   let mi = state.allData.findIndex(m => m.monthName === yMon);
-  if (mi < 0) mi = state.allData.length - 1; // fallback to last month
+  if (mi < 0) mi = state.allData.length - 1;
 
   const md  = state.allData[mi];
   const day = md ? Math.min(yDay, md.dates.length) : 1;
@@ -232,63 +254,57 @@ function setDefaultRange() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CROSS-MONTH DATA SLICE
+// CROSS-MONTH SLICE
 // ═══════════════════════════════════════════════════════════════
 function getCrossMonthSlice() {
   const rs = state.rangeStart, re = state.rangeEnd;
   if (!state.allData.length) return { dates:[], products:[], grandTotal:{avgROAS:0,dailyROAS:[]} };
 
-  let allDates = [];
+  let allDates = [], gtDaily = [];
   const productMap = {};
-  let gtDaily = [];
 
   for (let mi = rs.monthIdx; mi <= re.monthIdx; mi++) {
     const md = state.allData[mi];
     if (!md) continue;
+    const from = (mi === rs.monthIdx) ? rs.day - 1 : 0;
+    const to   = (mi === re.monthIdx) ? re.day     : md.dates.length;
 
-    const fromDay = (mi === rs.monthIdx) ? rs.day - 1 : 0;
-    const toDay   = (mi === re.monthIdx) ? re.day     : md.dates.length;
-
-    allDates = allDates.concat(md.dates.slice(fromDay, toDay));
+    allDates = allDates.concat(md.dates.slice(from, to));
+    gtDaily  = gtDaily.concat(md.grandTotal.dailyROAS.slice(from, to));
 
     md.products.forEach(p => {
-      if (!productMap[p.name]) productMap[p.name] = { name: p.name, dailyROAS: [] };
+      if (!productMap[p.name]) productMap[p.name] = { name:p.name, dailyROAS:[] };
       productMap[p.name].dailyROAS = productMap[p.name].dailyROAS.concat(
-        p.dailyROAS.slice(fromDay, toDay)
+        p.dailyROAS.slice(from, to)
       );
     });
-
-    gtDaily = gtDaily.concat(md.grandTotal.dailyROAS.slice(fromDay, toDay));
   }
 
   const products = Object.values(productMap).map(p => {
-    const valid = p.dailyROAS.filter(v => v !== null && v > 0);
+    const valid = p.dailyROAS.filter(v => v!==null && v>0);
     return { ...p, avgROAS: valid.length ? valid.reduce((a,b)=>a+b,0)/valid.length : 0 };
   });
 
-  const gtValid = gtDaily.filter(v => v !== null && v > 0);
-  const grandTotal = {
-    avgROAS:   gtValid.length ? gtValid.reduce((a,b)=>a+b,0)/gtValid.length : 0,
-    dailyROAS: gtDaily,
-  };
-
-  return { dates: allDates, products, grandTotal };
-}
-
-// Full-month slice for comparison panel
-function getFullMonthSlice(md) {
-  const products = md.products.map(p => {
-    const valid = p.dailyROAS.filter(v => v !== null && v > 0);
-    return { ...p, avgROAS: valid.length ? valid.reduce((a,b)=>a+b,0)/valid.length : 0 };
-  });
-  const gtV = md.grandTotal.dailyROAS.filter(v => v !== null && v > 0);
+  const gtV = gtDaily.filter(v => v!==null && v>0);
   return {
-    dates: md.dates,
+    dates: allDates,
     products,
     grandTotal: {
       avgROAS:   gtV.length ? gtV.reduce((a,b)=>a+b,0)/gtV.length : 0,
-      dailyROAS: md.grandTotal.dailyROAS,
+      dailyROAS: gtDaily,
     },
+  };
+}
+
+function getFullMonthSlice(md) {
+  const products = md.products.map(p => {
+    const valid = p.dailyROAS.filter(v=>v!==null&&v>0);
+    return { ...p, avgROAS: valid.length ? valid.reduce((a,b)=>a+b,0)/valid.length : 0 };
+  });
+  const gtV = md.grandTotal.dailyROAS.filter(v=>v!==null&&v>0);
+  return {
+    dates: md.dates, products,
+    grandTotal: { avgROAS: gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0, dailyROAS:md.grandTotal.dailyROAS },
   };
 }
 
@@ -298,7 +314,7 @@ function getFullMonthSlice(md) {
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.platform-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.platform-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       state.currentTab = btn.dataset.tab;
       state.hiddenProducts.clear();
@@ -309,12 +325,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('dateRangeTrigger').addEventListener('click', openCalendar);
 
   document.getElementById('toggleAll').addEventListener('change', e => {
-    const md = state.allData[state.rangeStart.monthIdx];
-    if (!md) return;
-    // Get all product names across range
-    const allNames = new Set(state.allData.flatMap(m => m.products.map(p => p.name)));
+    const allNames = new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
     if (e.target.checked) state.hiddenProducts.clear();
-    else allNames.forEach(n => state.hiddenProducts.add(n));
+    else allNames.forEach(n=>state.hiddenProducts.add(n));
     renderDashboard();
   });
 
@@ -346,13 +359,11 @@ async function loadData(silent=false) {
       now.toLocaleDateString('en-MY',{day:'2-digit',month:'short'}) + ' ' +
       now.toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'});
 
-    // Set default range only on first load (or if range is invalid)
-    const rs = state.rangeStart;
-    if (!state.allData[rs.monthIdx]) setDefaultRange();
+    if (!state.allData[state.rangeStart.monthIdx]) setDefaultRange();
     else updateTriggerLabel();
 
-    if (state.compareMonths.size === 0) {
-      json.data.forEach(m => state.compareMonths.add(m.monthName));
+    if (state.compareMonths.size===0) {
+      json.data.forEach(m=>state.compareMonths.add(m.monthName));
     }
 
     showState('content');
@@ -371,13 +382,12 @@ function showState(w) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// RENDER DASHBOARD
+// RENDER
 // ═══════════════════════════════════════════════════════════════
 function renderDashboard() {
   const slice = getCrossMonthSlice();
-  // All products from all months for consistent colours
-  const allProducts = state.allData.flatMap(m => m.products)
-    .filter((p,i,a) => a.findIndex(x=>x.name===p.name)===i);
+  const allProducts = state.allData.flatMap(m=>m.products)
+    .filter((p,i,a)=>a.findIndex(x=>x.name===p.name)===i);
   renderToggles(slice.products, allProducts);
   renderStats(slice);
   renderChart(slice, allProducts);
@@ -386,17 +396,15 @@ function renderDashboard() {
 }
 
 function syncAllCheckbox() {
-  const allNames = new Set(state.allData.flatMap(m => m.products.map(p => p.name)));
+  const allNames = new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
   const cb = document.getElementById('toggleAll');
-  const allOn  = [...allNames].every(n => !state.hiddenProducts.has(n));
-  const allOff = [...allNames].every(n =>  state.hiddenProducts.has(n));
-  cb.checked       = allOn;
-  cb.indeterminate = !allOn && !allOff;
+  const allOn  = [...allNames].every(n=>!state.hiddenProducts.has(n));
+  const allOff = [...allNames].every(n=> state.hiddenProducts.has(n));
+  cb.checked = allOn; cb.indeterminate = !allOn && !allOff;
 }
 
 function renderToggles(products, allProducts) {
-  const c = document.getElementById('productToggles');
-  c.innerHTML = '';
+  const c = document.getElementById('productToggles'); c.innerHTML='';
   products.forEach(p => {
     const idx   = allProducts.findIndex(ap=>ap.name===p.name);
     const color = CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0];
@@ -506,7 +514,7 @@ function renderRankList(id, items) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// COMPARE  (always visible, uses full-month averages)
+// COMPARE
 // ═══════════════════════════════════════════════════════════════
 function renderCompare() {
   const selected  = [...state.compareMonths];
@@ -514,7 +522,6 @@ function renderCompare() {
   const chartWrap = document.getElementById('compareChartWrap');
   const tableWrap = document.getElementById('compareTableWrap');
 
-  // Rebuild pills whenever data changes
   buildComparePicker();
 
   if (selected.length < 2) {
@@ -533,7 +540,6 @@ function renderCompare() {
 
   const allNames = [...new Set(monthsData.flatMap(m=>m.slice.products.map(p=>p.name)))];
 
-  // Bar chart
   if (state.compareChart) state.compareChart.destroy();
   const ctx = document.getElementById('compareChart').getContext('2d');
   state.compareChart = new Chart(ctx,{type:'bar',
@@ -561,7 +567,6 @@ function renderCompare() {
     },
   });
 
-  // Table
   const thead=document.getElementById('compareTableHead');
   const tbody=document.getElementById('compareTableBody');
   thead.innerHTML='<tr><th>Product</th>'+monthsData.map(m=>`<th style="color:${m.color}">${m.name}</th>`).join('')+'<th>Best</th></tr>';
@@ -570,7 +575,7 @@ function renderCompare() {
     const vals=monthsData.map(m=>{ const p=m.slice.products.find(p=>p.name===name); return p?p.avgROAS:null; });
     const maxV=Math.max(...vals.filter(v=>v!==null));
     const bi  =vals.indexOf(maxV);
-    const cells=vals.map((v,i)=>{
+    const cells=vals.map((v)=>{
       const {cls}=v!==null?roasRating(v):{cls:''};
       return `<td class="${v===maxV&&v>0?'compare-best':''}"><span class="roas-badge ${cls}">${v!==null?fmt(v):'—'}</span></td>`;
     }).join('');
@@ -583,17 +588,16 @@ function renderCompare() {
 
 function buildComparePicker() {
   const c = document.getElementById('compareMonthPicker');
-  // Rebuild only if month count changed
-  if (c.children.length === state.allData.length) return;
-  c.innerHTML = '';
-  state.allData.forEach((m, i) => {
-    const color   = MONTH_COLORS[i % MONTH_COLORS.length];
-    const checked = state.compareMonths.has(m.monthName);
-    const label   = document.createElement('label');
-    label.className = 'cmp-pill' + (checked ? ' active' : '');
-    label.style.setProperty('--mc', color);
-    label.innerHTML = `<input type="checkbox" ${checked?'checked':''}><span class="cmp-dot"></span>${m.monthName}`;
-    label.querySelector('input').addEventListener('change', e => {
+  if (c.children.length===state.allData.length) return;
+  c.innerHTML='';
+  state.allData.forEach((m,i)=>{
+    const color=MONTH_COLORS[i%MONTH_COLORS.length];
+    const checked=state.compareMonths.has(m.monthName);
+    const label=document.createElement('label');
+    label.className='cmp-pill'+(checked?' active':'');
+    label.style.setProperty('--mc',color);
+    label.innerHTML=`<input type="checkbox" ${checked?'checked':''}><span class="cmp-dot"></span>${m.monthName}`;
+    label.querySelector('input').addEventListener('change',e=>{
       if (e.target.checked) { state.compareMonths.add(m.monthName);    label.classList.add('active'); }
       else                  { state.compareMonths.delete(m.monthName); label.classList.remove('active'); }
       renderCompare();
