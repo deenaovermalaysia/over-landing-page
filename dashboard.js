@@ -148,29 +148,43 @@ function buildCal() {
   const isFirst = cal.viewIdx === 0;
   const isLast  = cal.viewIdx === state.allData.length - 1;
 
-  // Weekday of the FIRST date that exists in this month (not necessarily day 1)
-  let dowFirst = 0, yearStr = '';
+  // Parse year + month from first available date string, or fall back to month name
+  let year = TODAY.getFullYear(), month = 1, yearStr = String(year);
   try {
-    const p = md.dates[0].split('/');
-    yearStr = p[2] || '';
-    const d = parseInt(p[0]), m = parseInt(p[1]), y = parseInt(p[2]);
-    if (y > 2000) dowFirst = new Date(y, m - 1, d).getDay();
+    if (md.dates.length > 0) {
+      const p = md.dates[0].split('/');
+      month    = parseInt(p[1]);         // 1-based month
+      year     = parseInt(p[2]);
+      yearStr  = p[2] || '';
+    } else {
+      month = MONTH_NAMES.indexOf(md.monthName) + 1;
+    }
   } catch(e) {}
 
-  // Build grid — show ALL dates in array, gray out those with no data
-  let grid = '';
-  for (let i = 0; i < dowFirst; i++) grid += '<div class="cal-cell cal-empty"></div>';
+  // Full month grid: weekday of the 1st, total days in month
+  const firstDow    = new Date(year, month - 1, 1).getDay();   // 0=Sun
+  const daysInMonth = new Date(year, month, 0).getDate();       // 28/29/30/31
 
+  // Build a Map of  actualDay → array-index  for days present in md.dates
+  const dayIndexMap = new Map();
   md.dates.forEach((dateStr, idx) => {
-    const actualDay = parseInt(dateStr.split('/')[0]);
-    const noData    = !hasDataAtIdx(md, idx);   // no ROAS data for this date
-    const todayMk   = isToday(cal.viewIdx, actualDay);
-    const selCls    = noData ? '' : getDayCls(actualDay, cal.viewIdx);
-    const todayCls  = todayMk  ? ' cal-today'   : '';
-    const greyClass = noData   ? ' cal-no-data' : '';
-    const onclick   = noData   ? '' : `onclick="calDay(${actualDay})"`;
-    grid += `<div class="cal-cell ${selCls}${todayCls}${greyClass}" ${onclick}>${actualDay}</div>`;
+    dayIndexMap.set(parseInt(dateStr.split('/')[0]), idx);
   });
+
+  // Build grid — show ALL days of the month
+  let grid = '';
+  for (let i = 0; i < firstDow; i++) grid += '<div class="cal-cell cal-empty"></div>';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const idx          = dayIndexMap.has(d) ? dayIndexMap.get(d) : -1;
+    const hasActualData = idx >= 0 && hasDataAtIdx(md, idx);
+    const todayMk      = isToday(cal.viewIdx, d);
+    const selCls       = hasActualData ? getDayCls(d, cal.viewIdx) : '';
+    const todayCls     = todayMk       ? ' cal-today'   : '';
+    const greyClass    = hasActualData ? ''              : ' cal-no-data';
+    const onclick      = hasActualData ? `onclick="calDay(${d})"` : '';
+    grid += `<div class="cal-cell ${selCls}${todayCls}${greyClass}" ${onclick}>${d}</div>`;
+  }
 
   // Footer
   const ts = cal.tempStart, te = cal.tempEnd;
