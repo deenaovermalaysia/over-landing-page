@@ -4,14 +4,12 @@
 const state = {
   currentTab:     'MY',
   allData:        [],
-  salesData:      {},
   rangeStart:     { monthIdx:0, day:1 },
   rangeEnd:       { monthIdx:0, day:1 },
   hiddenProducts: new Set(),
   chartInstance:  null,
   compareChart:   null,
   compareMonths:  new Set(),
-  sortOrder:      'none',
 };
 
 const CHART_COLORS = [
@@ -33,68 +31,88 @@ function normaliseRange(a, b) {
   return rkey(a.monthIdx,a.day) <= rkey(b.monthIdx,b.day) ? [a,b] : [b,a];
 }
 
-// ── Date helpers ───────────────────────────────────────────────
-const TODAY     = new Date();
-const TODAY_MON = MONTH_NAMES[TODAY.getMonth()];
-const TODAY_DAY = TODAY.getDate();
+// ── Today info (computed once) ─────────────────────────────────
+const TODAY      = new Date();
+const TODAY_MON  = MONTH_NAMES[TODAY.getMonth()];   // e.g. "April"
+const TODAY_DAY  = TODAY.getDate();                  // e.g. 28
+const TODAY_YEAR = TODAY.getFullYear();
 
-// Find the last day INDEX in md.dates that has any non-null ROAS
-function getLastDataIdx(md) {
-  for (let i = md.dates.length - 1; i >= 0; i--) {
-    if (md.products.some(p => p.dailyROAS[i] !== null)) return i;
-  }
-  return -1;
+const YEST       = new Date(TODAY); YEST.setDate(TODAY.getDate() - 1);
+const YEST_MON   = MONTH_NAMES[YEST.getMonth()];
+const YEST_DAY   = YEST.getDate();
+
+// ── salesData helpers: col A = source of truth for "last real date" ──
+function sortedSalesDates() {
+  return Object.keys(state.salesData).sort((a,b) => {
+    const [da,ma,ya]=a.split('/').map(Number), [db,mb,yb]=b.split('/').map(Number);
+    return new Date(ya,ma-1,da)-new Date(yb,mb-1,db);
+  });
 }
-
-// Actual calendar day number for the last day with real data
 function getLastDataDay(md) {
-  const idx = getLastDataIdx(md);
-  return idx >= 0 ? parseInt(md.dates[idx].split('/')[0]) : null;
+  const monIdx = MONTH_NAMES.indexOf(md.monthName)+1;
+  let last=-1;
+  Object.keys(state.salesData).forEach(s=>{
+    const p=s.split('/');
+    if (parseInt(p[1])===monIdx){const d=parseInt(p[0]);if(d>last)last=d;}
+  });
+  if (last>0) return last;
+  for (let i=md.dates.length-1;i>=0;i--){
+    if (md.products.some(p=>p.dailyROAS[i]!==null&&p.dailyROAS[i]>0))
+      return parseInt(md.dates[i].split('/')[0]);
+  }
+  return null;
 }
-
-// Find the month index and actual day for the overall last data point across all months
 function getOverallLastData() {
-  for (let mi = state.allData.length - 1; mi >= 0; mi--) {
-    const day = getLastDataDay(state.allData[mi]);
-    if (day !== null) return { monthIdx: mi, day };
+  const s=sortedSalesDates();
+  if (s.length>0){
+    const last=s[s.length-1],[day,mon]=last.split('/').map(Number);
+    const mi=state.allData.findIndex(m=>m.monthName===MONTH_NAMES[mon-1]);
+    if (mi>=0) return {monthIdx:mi,day};
+  }
+  for (let mi=state.allData.length-1;mi>=0;mi--){
+    const md=state.allData[mi];
+    for (let i=md.dates.length-1;i>=0;i--)
+      if (md.products.some(p=>p.dailyROAS[i]!==null&&p.dailyROAS[i]>0))
+        return {monthIdx:mi,day:parseInt(md.dates[i].split('/')[0])};
   }
   return null;
 }
 
-function getDayIndex(md, actualDay) {
-  return md.dates.findIndex(d => parseInt(d.split('/')[0]) === actualDay);
-}
-
-function isFuture(monthIdx, actualDay) {
-  const todayMi = state.allData.findIndex(m => m.monthName === TODAY_MON);
-  if (todayMi === -1) return false;
-  if (monthIdx > todayMi) return true;
-  if (monthIdx < todayMi) return false;
-  return actualDay >= TODAY_DAY;
-}
-
-function isToday(monthIdx, actualDay) {
+// Is a given {monthIdx, day} in the future (no data yet)?
+function isFuture(monthIdx, day) {
   const md = state.allData[monthIdx];
-  return !!md && md.monthName === TODAY_MON && actualDay === TODAY_DAY;
+  if (!md) return true;
+  // Compare month name + day vs today
+  const mName = md.monthName;
+  const todayMi = state.allData.findIndex(m => m.monthName === TODAY_MON);
+  if (monthIdx > todayMi && todayMi !== -1) return true;   // future month
+  if (monthIdx < todayMi || todayMi === -1) return false;  // past month
+  return day >= TODAY_DAY;  // same month — today and beyond = no data
 }
 
+// Is this {monthIdx, day} == today?
+function isToday(monthIdx, day) {
+  const md = state.allData[monthIdx];
+  if (!md) return false;
+  return md.monthName === TODAY_MON && day === TODAY_DAY;
+}
+
+// ── Is current selection a single day? ────────────────────────
 function isSingleDay() {
   return state.rangeStart.monthIdx === state.rangeEnd.monthIdx &&
          state.rangeStart.day      === state.rangeEnd.day;
 }
 
-function getSelectedDateStr() {
-  if (!isSingleDay()) return null;
-  const md = state.allData[state.rangeStart.monthIdx];
-  if (!md) return null;
-  const idx = getDayIndex(md, state.rangeStart.day);
-  return idx >= 0 ? md.dates[idx] : null;
-}
-
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR
 // ═══════════════════════════════════════════════════════════════
-const cal = { open:false, viewIdx:0, phase:'start', tempStart:null, tempEnd:null };
+const cal = {
+  open:      false,
+  viewIdx:   0,
+  phase:    'start',
+  tempStart: null,
+  tempEnd:   null,
+};
 
 function openCalendar() {
   cal.viewIdx   = state.rangeStart.monthIdx;
@@ -118,6 +136,7 @@ function closeCal() {
   if (p) p.style.display = 'none';
 }
 
+// Coord-based outside-click — safe after innerHTML rebuild
 document.addEventListener('click', function(e) {
   if (!cal.open) return;
   const trigger = document.getElementById('dateRangeTrigger');
@@ -125,8 +144,9 @@ document.addEventListener('click', function(e) {
   const popup = document.getElementById('calPopup');
   if (!popup) return;
   const r = popup.getBoundingClientRect();
-  if (e.clientX < r.left || e.clientX > r.right ||
-      e.clientY < r.top  || e.clientY > r.bottom) closeCal();
+  const inside = e.clientX >= r.left && e.clientX <= r.right &&
+                 e.clientY >= r.top  && e.clientY <= r.bottom;
+  if (!inside) closeCal();
 });
 
 function buildCal() {
@@ -134,68 +154,54 @@ function buildCal() {
   const md    = state.allData[cal.viewIdx];
   if (!md || !popup) return;
 
+  const max     = md.dates.length;
   const isFirst = cal.viewIdx === 0;
   const isLast  = cal.viewIdx === state.allData.length - 1;
 
-  // Parse year/month from ANY date in this month
-  let year = 0, month = 0, yearStr = '';
-  if (md.dates.length > 0) {
+  let dow = 0, yearStr = '';
+  try {
     const p = md.dates[0].split('/');
-    year    = parseInt(p[2]) || new Date().getFullYear();
-    month   = parseInt(p[1]) || 1;
     yearStr = p[2] || '';
-  } else {
-    // Fallback from month name
-    year  = new Date().getFullYear();
-    month = MONTH_NAMES.indexOf(md.monthName) + 1;
-  }
+    if (+p[2] > 2000) dow = new Date(+p[2], +p[1]-1, 1).getDay();
+  } catch(e) {}
 
-  // Total days in this calendar month
-  const totalDays = new Date(year, month, 0).getDate();
-
-  // Set of day numbers that actually have data in the sheet
-  const dataDays = new Set(md.dates.map(d => parseInt(d.split('/')[0])));
-
-  // Day-of-week for day 1 of the month (for correct grid alignment)
-  const dowDay1 = new Date(year, month - 1, 1).getDay();
-
+  // Day cells
   let grid = '';
-  for (let i = 0; i < dowDay1; i++) grid += '<div class="cal-cell cal-empty"></div>';
-
-  for (let d = 1; d <= totalDays; d++) {
-    const inData  = dataDays.has(d);
-    const future  = inData && isFuture(cal.viewIdx, d);
-    const noData  = !inData;                    // day exists on calendar but no sheet data
+  for (let i = 0; i < dow; i++) grid += '<div class="cal-cell cal-empty"></div>';
+  for (let d = 1; d <= max; d++) {
+    const future  = isFuture(cal.viewIdx, d);
     const todayMk = isToday(cal.viewIdx, d);
-
-    // Selection highlight only if day is selectable
-    const selCls   = (inData && !future && !noData) ? getDayCls(d, cal.viewIdx) : '';
-    const todayCls = todayMk  ? ' cal-today'   : '';
-    const stateCls = noData   ? ' cal-no-data' : future ? ' cal-future' : '';
-    const onclick  = (inData && !future) ? `onclick="calDay(${d})"` : '';
-
-    grid += `<div class="cal-cell ${selCls}${stateCls}${todayCls}" ${onclick}>${d}</div>`;
+    const selCls  = future ? '' : getDayCls(d, cal.viewIdx);
+    const todayCls= todayMk ? ' cal-today' : '';
+    const futCls  = future  ? ' cal-future' : '';
+    const onclick = future  ? '' : `onclick="calDay(${d})"`;
+    grid += `<div class="cal-cell ${selCls}${todayCls}${futCls}" ${onclick}>${d}</div>`;
   }
 
-  // Footer status
+  // Footer status + apply button
   const ts = cal.tempStart, te = cal.tempEnd;
   let statusHtml = '<span class="cal-status">① Click a start date</span>';
   let applyBtn   = '';
 
-  if (ts && cal.phase === 'end' && !te) {
-    const tsN = (state.allData[ts.monthIdx]?.monthName || '').slice(0,3);
-    statusHtml = `<span class="cal-status">${tsN} ${ts.day} &rarr; ② Click end date (or same day again)</span>`;
+  if (ts && cal.phase==='end' && !te) {
+    const tsName = (state.allData[ts.monthIdx]?.monthName||'').slice(0,3);
+    statusHtml = `<span class="cal-status">${tsName} ${ts.day} &rarr; ② Click end date (or same day)</span>`;
   } else if (ts && te) {
-    const [lo, hi] = normaliseRange(ts, te);
-    const loN = (state.allData[lo.monthIdx]?.monthName || '').slice(0,3);
-    const hiN = (state.allData[hi.monthIdx]?.monthName || '').slice(0,3);
-    const same = lo.monthIdx === hi.monthIdx && lo.day === hi.day;
-    const lbl  = same ? `${loN} ${lo.day} (single day)`
-      : lo.monthIdx === hi.monthIdx ? `${loN} ${lo.day} – ${hi.day}`
-      : `${loN} ${lo.day} – ${hiN} ${hi.day}`;
+    const [lo,hi] = normaliseRange(ts,te);
+    const loN = (state.allData[lo.monthIdx]?.monthName||'').slice(0,3);
+    const hiN = (state.allData[hi.monthIdx]?.monthName||'').slice(0,3);
+    const same = lo.monthIdx===hi.monthIdx && lo.day===hi.day;
+    const lbl  = same
+      ? `${loN} ${lo.day} (single day)`
+      : lo.monthIdx===hi.monthIdx
+        ? `${loN} ${lo.day} – ${hi.day}`
+        : `${loN} ${lo.day} – ${hiN} ${hi.day}`;
     statusHtml = `<span class="cal-status cal-status--ready">${lbl}</span>`;
     applyBtn   = `<button class="cal-apply-btn" onclick="applyCalendar()">Apply</button>`;
   }
+
+  // Today legend
+  const todayLabel = `<span class="cal-today-legend"><span class="cal-today-dot"></span>Today (${TODAY_MON.slice(0,3)} ${TODAY_DAY}) — data up to yesterday</span>`;
 
   popup.innerHTML = `
     <div class="cal-head">
@@ -204,21 +210,22 @@ function buildCal() {
       <button class="cal-nav" onclick="calNav(1)"  ${isLast?'disabled':''}>&#8250;</button>
     </div>
     <div class="cal-presets">
-      <button onclick="calPreset('latest')">Latest Day</button>
-      <button onclick="calPreset('last7')">Last 7 Days</button>
-      <button onclick="calPreset('last14')">Last 14 Days</button>
-      <button onclick="calPreset('first7')">First 7 Days</button>
-      <button onclick="calPreset('full')">Full Month</button>
+      <button onclick="calPreset('yest')">Yesterday</button>
+      <button onclick="calPreset('last7',${max})">Last 7 Days</button>
+      <button onclick="calPreset('last14',${max})">Last 14 Days</button>
+      <button onclick="calPreset('first7',${max})">First 7 Days</button>
+      <button onclick="calPreset('full',${max})">Full Month</button>
     </div>
     <div class="cal-dow">
       <span>Su</span><span>Mo</span><span>Tu</span><span>We</span>
       <span>Th</span><span>Fr</span><span>Sa</span>
     </div>
     <div class="cal-grid">${grid}</div>
-    <div class="cal-legend-row">
-      <span class="cal-today-dot"></span>Today (${TODAY_MON.slice(0,3)} ${TODAY_DAY}) — data up to latest available
-    </div>
-    <div class="cal-foot">${statusHtml}${applyBtn}</div>`;
+    <div class="cal-legend-row">${todayLabel}</div>
+    <div class="cal-foot">
+      ${statusHtml}
+      ${applyBtn}
+    </div>`;
 }
 
 function getDayCls(day, viewIdx) {
@@ -228,72 +235,60 @@ function getDayCls(day, viewIdx) {
   const sKey = rkey(ts.monthIdx, ts.day);
   const eKey = te ? rkey(te.monthIdx, te.day) : sKey;
   const lo = Math.min(sKey,eKey), hi = Math.max(sKey,eKey);
-  if (key===lo||key===hi) return 'cal-sel';
-  if (key>lo&&key<hi)    return 'cal-range';
+  if (key===lo || key===hi) return 'cal-sel';
+  if (key>lo && key<hi)    return 'cal-range';
   return '';
 }
 
 function calNav(dir) {
   const ni = cal.viewIdx + dir;
-  if (ni<0||ni>=state.allData.length) return;
-  cal.viewIdx = ni; buildCal();
+  if (ni<0 || ni>=state.allData.length) return;
+  cal.viewIdx = ni;
+  buildCal();
 }
 
-function calDay(d) {
-  if (isFuture(cal.viewIdx, d)) return;
+function calDay(day) {
+  if (isFuture(cal.viewIdx, day)) return; // safety guard
   if (cal.phase==='start') {
-    cal.tempStart = { monthIdx:cal.viewIdx, day:d };
-    cal.tempEnd   = null; cal.phase = 'end';
+    cal.tempStart = { monthIdx:cal.viewIdx, day };
+    cal.tempEnd   = null;
+    cal.phase     = 'end';
   } else {
-    cal.tempEnd = { monthIdx:cal.viewIdx, day:d };
+    cal.tempEnd = { monthIdx:cal.viewIdx, day };
     cal.phase   = 'start';
   }
   buildCal();
 }
 
-function calPreset(type) {
+function calPreset(type, max) {
+  // "Yesterday" preset — find yesterday's month in data
+  if (type==='yest') {
+    const last=getOverallLastData(); if(!last) return;
+    cal.tempStart={...last}; cal.tempEnd={...last};
+    cal.phase='start'; applyCalendar(); return;
+  }
   const mi  = cal.viewIdx;
   const md  = state.allData[mi];
-  if (!md || !md.dates.length) return;
-
-  // First day with data, and last day with ACTUAL data (not empty columns)
+  if (!md||!md.dates.length) return;
   const firstDay  = parseInt(md.dates[0].split('/')[0]);
-  const lastDataD = getLastDataDay(md) || firstDay;
-
+  const lastDataD = getLastDataDay(md)||firstDay;
   switch(type) {
-    case 'latest': {
-      // Jump to the overall last data point (may navigate months)
-      const last = getOverallLastData();
-      if (!last) return;
-      cal.tempStart = { ...last }; cal.tempEnd = { ...last };
-      cal.phase='start'; applyCalendar(); return;
-    }
-    case 'full':
-      cal.tempStart = { monthIdx:mi, day:firstDay };
-      cal.tempEnd   = { monthIdx:mi, day:lastDataD };
-      break;
-    case 'last7':
-      cal.tempStart = { monthIdx:mi, day:Math.max(firstDay, lastDataD-6) };
-      cal.tempEnd   = { monthIdx:mi, day:lastDataD };
-      break;
-    case 'last14':
-      cal.tempStart = { monthIdx:mi, day:Math.max(firstDay, lastDataD-13) };
-      cal.tempEnd   = { monthIdx:mi, day:lastDataD };
-      break;
-    case 'first7':
-      cal.tempStart = { monthIdx:mi, day:firstDay };
-      cal.tempEnd   = { monthIdx:mi, day:Math.min(lastDataD, firstDay+6) };
-      break;
+    case 'full':   cal.tempStart={monthIdx:mi,day:firstDay}; cal.tempEnd={monthIdx:mi,day:lastDataD}; break;
+    case 'last7':  cal.tempStart={monthIdx:mi,day:Math.max(firstDay,lastDataD-6)};  cal.tempEnd={monthIdx:mi,day:lastDataD}; break;
+    case 'last14': cal.tempStart={monthIdx:mi,day:Math.max(firstDay,lastDataD-13)}; cal.tempEnd={monthIdx:mi,day:lastDataD}; break;
+    case 'first7': cal.tempStart={monthIdx:mi,day:firstDay}; cal.tempEnd={monthIdx:mi,day:Math.min(lastDataD,firstDay+6)}; break;
   }
   cal.phase='start'; applyCalendar();
 }
 
 function applyCalendar() {
   if (!cal.tempStart||!cal.tempEnd) return;
-  const [lo,hi] = normaliseRange(cal.tempStart, cal.tempEnd);
+  const [lo,hi] = normaliseRange(cal.tempStart,cal.tempEnd);
   state.rangeStart = lo; state.rangeEnd = hi;
-  updateTriggerLabel(); closeCal();
-  renderDashboard(); renderCompare();
+  updateTriggerLabel();
+  closeCal();
+  renderDashboard();
+  renderCompare();
 }
 
 function updateTriggerLabel() {
@@ -302,55 +297,53 @@ function updateTriggerLabel() {
   const rs=state.rangeStart, re=state.rangeEnd;
   const sm=(state.allData[rs.monthIdx]?.monthName||'').slice(0,3);
   const em=(state.allData[re.monthIdx]?.monthName||'').slice(0,3);
-  if (rs.monthIdx===re.monthIdx && rs.day===re.day)
+  if (rs.monthIdx===re.monthIdx && rs.day===re.day) {
     el.textContent=`${sm} ${rs.day}`;
-  else if (rs.monthIdx===re.monthIdx)
+  } else if (rs.monthIdx===re.monthIdx) {
     el.textContent=`${sm} ${rs.day} – ${re.day}`;
-  else
+  } else {
     el.textContent=`${sm} ${rs.day} – ${em} ${re.day}`;
+  }
 }
 
-// ── Default: last day with real data ──────────────────────────
+// ── Default: yesterday ─────────────────────────────────────────
 function setDefaultRange() {
   const last = getOverallLastData();
   if (!last) return;
-  state.rangeStart = { ...last };
-  state.rangeEnd   = { ...last };
+  state.rangeStart = {...last}; state.rangeEnd = {...last};
   updateTriggerLabel();
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SLICE
+// CROSS-MONTH SLICE
 // ═══════════════════════════════════════════════════════════════
 function getCrossMonthSlice() {
   const rs=state.rangeStart, re=state.rangeEnd;
-  if (!state.allData.length) return {dates:[],products:[],grandTotal:{avgROAS:0,dailyROAS:[]}};
+  if (!state.allData.length) return { dates:[], products:[], grandTotal:{avgROAS:0,dailyROAS:[]} };
 
   let allDates=[], gtDaily=[];
   const productMap={};
 
   for (let mi=rs.monthIdx; mi<=re.monthIdx; mi++) {
     const md=state.allData[mi]; if (!md) continue;
-    let fromIdx=0, toIdx=md.dates.length;
-    if (mi===rs.monthIdx) { const fi=getDayIndex(md,rs.day); fromIdx=fi>=0?fi:0; }
-    if (mi===re.monthIdx) { const ti=getDayIndex(md,re.day); toIdx=ti>=0?ti+1:md.dates.length; }
-
-    allDates=allDates.concat(md.dates.slice(fromIdx,toIdx));
-    gtDaily =gtDaily.concat(md.grandTotal.dailyROAS.slice(fromIdx,toIdx));
+    const from=(mi===rs.monthIdx) ? rs.day-1 : 0;
+    const to  =(mi===re.monthIdx) ? re.day   : md.dates.length;
+    allDates=allDates.concat(md.dates.slice(from,to));
+    gtDaily =gtDaily.concat(md.grandTotal.dailyROAS.slice(from,to));
     md.products.forEach(p=>{
       if (!productMap[p.name]) productMap[p.name]={name:p.name,dailyROAS:[]};
-      productMap[p.name].dailyROAS=productMap[p.name].dailyROAS.concat(p.dailyROAS.slice(fromIdx,toIdx));
+      productMap[p.name].dailyROAS=productMap[p.name].dailyROAS.concat(p.dailyROAS.slice(from,to));
     });
   }
 
   const products=Object.values(productMap).map(p=>{
-    const v=p.dailyROAS.filter(v=>v!==null&&v>0);
-    return {...p,avgROAS:v.length?v.reduce((a,b)=>a+b,0)/v.length:0};
+    const valid=p.dailyROAS.filter(v=>v!==null&&v>0);
+    return {...p,avgROAS:valid.length?valid.reduce((a,b)=>a+b,0)/valid.length:0};
   });
   const gtV=gtDaily.filter(v=>v!==null&&v>0);
   return {
-    dates:allDates,products,
-    grandTotal:{avgROAS:gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0,dailyROAS:gtDaily},
+    dates:allDates, products,
+    grandTotal:{avgROAS:gtV.length?gtV.reduce((a,b)=>a+b,0)/gtV.length:0, dailyROAS:gtDaily},
   };
 }
 
@@ -377,13 +370,16 @@ document.addEventListener('DOMContentLoaded',()=>{
       loadData();
     });
   });
+
   document.getElementById('dateRangeTrigger').addEventListener('click',openCalendar);
+
   document.getElementById('toggleAll').addEventListener('change',e=>{
-    const all=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
+    const allNames=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
     if (e.target.checked) state.hiddenProducts.clear();
-    else all.forEach(n=>state.hiddenProducts.add(n));
+    else allNames.forEach(n=>state.hiddenProducts.add(n));
     renderDashboard();
   });
+
   setInterval(()=>loadData(true),5*60*1000);
   loadData();
 });
@@ -405,18 +401,14 @@ async function loadData(silent=false){
     const json=await res.json();
     if (!res.ok||!json.success) throw new Error(json.detail||json.error||'Unknown');
 
-    state.allData  =json.data;
-    state.salesData=json.salesData||{};
-
+    state.allData=json.data;
     const now=new Date();
     document.getElementById('lastUpdated').textContent=
       now.toLocaleDateString('en-MY',{day:'2-digit',month:'short'})+' '+
       now.toLocaleTimeString('en-MY',{hour:'2-digit',minute:'2-digit'});
 
-    // Only reset range on first load or if it's become invalid
-    const validRange = state.allData[state.rangeStart.monthIdx] &&
-      getDayIndex(state.allData[state.rangeStart.monthIdx], state.rangeStart.day) >= 0;
-    if (!validRange) setDefaultRange();
+    // Set default only on first load
+    if (!state.allData[state.rangeStart.monthIdx]) setDefaultRange();
     else updateTriggerLabel();
 
     if (state.compareMonths.size===0) json.data.forEach(m=>state.compareMonths.add(m.monthName));
@@ -437,35 +429,26 @@ function showState(w){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SORT
-// ═══════════════════════════════════════════════════════════════
-function toggleSort(){
-  state.sortOrder=state.sortOrder==='desc'?'asc':state.sortOrder==='asc'?'none':'desc';
-  const btn=document.getElementById('sortBtn');
-  if (btn) btn.innerHTML=state.sortOrder==='desc'?'&#8595; High &rarr; Low':
-                          state.sortOrder==='asc' ?'&#8593; Low &rarr; High':'&#8597; Sort';
-  renderTable(getCrossMonthSlice().products);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// RENDER
+// RENDER DASHBOARD
 // ═══════════════════════════════════════════════════════════════
 function renderDashboard(){
   const slice=getCrossMonthSlice();
-  const allP=state.allData.flatMap(m=>m.products).filter((p,i,a)=>a.findIndex(x=>x.name===p.name)===i);
-  renderToggles(slice.products,allP);
+  const allProducts=state.allData.flatMap(m=>m.products)
+    .filter((p,i,a)=>a.findIndex(x=>x.name===p.name)===i);
+  renderToggles(slice.products,allProducts);
   renderStats(slice);
-  if (isSingleDay()) renderBarChart(slice,allP);
-  else               renderLineChart(slice,allP);
+  // ── Auto-switch chart type ──────────────────────────────────
+  if (isSingleDay()) renderBarChart(slice, allProducts);
+  else               renderLineChart(slice, allProducts);
   renderTable(slice.products);
   renderRanks(slice.products);
 }
 
 function syncAllCheckbox(){
-  const all=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
+  const allNames=new Set(state.allData.flatMap(m=>m.products.map(p=>p.name)));
   const cb=document.getElementById('toggleAll');
-  const allOn =[...all].every(n=>!state.hiddenProducts.has(n));
-  const allOff=[...all].every(n=> state.hiddenProducts.has(n));
+  const allOn =[...allNames].every(n=>!state.hiddenProducts.has(n));
+  const allOff=[...allNames].every(n=> state.hiddenProducts.has(n));
   cb.checked=allOn; cb.indeterminate=!allOn&&!allOff;
 }
 
@@ -507,8 +490,8 @@ function renderStats(slice){
   document.getElementById('statDaysSub').textContent=`of ${dates.length} day${dates.length!==1?'s':''}`;
 }
 
-// ── LINE CHART ─────────────────────────────────────────────────
-function renderLineChart(slice,allProducts){
+// ── LINE CHART — for date ranges ───────────────────────────────
+function renderLineChart(slice, allProducts){
   if (state.chartInstance) state.chartInstance.destroy();
   const {dates,products,grandTotal}=slice;
   const ctx    =document.getElementById('roasChart').getContext('2d');
@@ -545,61 +528,48 @@ function renderLineChart(slice,allProducts){
   }});
 }
 
-// ── BAR CHART (single day) — always shows Ads Spent + Sales ───
-function renderBarChart(slice,allProducts){
+// ── BAR CHART — for single day ─────────────────────────────────
+function renderBarChart(slice, allProducts){
   if (state.chartInstance) state.chartInstance.destroy();
   const {products}=slice;
   const ctx    =document.getElementById('roasChart').getContext('2d');
   const visible=products.filter(p=>!state.hiddenProducts.has(p.name));
-  const labels =visible.map(p=>p.name);
-  const values =visible.map(p=>+p.avgROAS.toFixed(2));
-  const colors =visible.map(p=>{
+
+  const labels  = visible.map(p=>p.name);
+  const values  = visible.map(p=>+p.avgROAS.toFixed(2));
+  const colors  = visible.map(p=>{
     const idx=(allProducts||products).findIndex(ap=>ap.name===p.name);
     return CHART_COLORS[idx>=0?idx%CHART_COLORS.length:0];
   });
 
-  const dateStr=getSelectedDateStr();
-  const fmtRM=v=>'RM '+Number(v||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  // Reference lines data
+  const goodLine = { label:'Good (3.0)',      data:Array(labels.length).fill(3), type:'line',borderColor:'rgba(34,197,94,.5)',  borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0 };
+  const excLine  = { label:'Excellent (5.0)', data:Array(labels.length).fill(5), type:'line',borderColor:'rgba(168,85,247,.5)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0 };
 
   updateChartBadge();
   state.chartInstance=new Chart(ctx,{
     type:'bar',
-    data:{labels,datasets:[
-      {label:'ROAS',data:values,backgroundColor:colors.map(c=>c+'BB'),borderColor:colors,borderWidth:1,borderRadius:6},
-      {label:'Good (3.0)',     data:Array(labels.length).fill(3),type:'line',borderColor:'rgba(34,197,94,.55)', borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0,backgroundColor:'transparent'},
-      {label:'Excellent (5.0)',data:Array(labels.length).fill(5),type:'line',borderColor:'rgba(168,85,247,.55)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,tension:0,backgroundColor:'transparent'},
-    ]},
+    data:{
+      labels,
+      datasets:[{
+        label:'ROAS',
+        data:values,
+        backgroundColor:colors.map(c=>c+'BB'),
+        borderColor:colors,
+        borderWidth:1,
+        borderRadius:6,
+      }, goodLine, excLine],
+    },
     options:{
       responsive:true,maintainAspectRatio:false,
       plugins:{
         legend:{display:false},
-        tooltip:{
-          backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
+        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
           titleColor:'#f1f5f9',bodyColor:'#94a3b8',
           callbacks:{
             title:items=>items[0]?.label||'',
-            label:ctx=>{
-              if (ctx.dataset.type==='line') return ` ${ctx.dataset.label}`;
-              const name=ctx.label;
-              const lines=[` ROAS: ${fmt(ctx.parsed.y)}`];
-
-              // Always show Ads Spent + Sales (show RM 0.00 if no data)
-              const dayData=dateStr?(state.salesData?.[dateStr]||{}):{};
-
-              if (name==='OB + OB Pro'){
-                const obE =dayData['OB']||{};
-                const obPE=dayData['OB Pro']||{};
-                lines.push(` Ads Spent: ${fmtRM((obE.adsSpent||0)+(obPE.adsSpent||0))}`);
-                lines.push(` Sales: ${fmtRM((obE.sales||0)+(obPE.sales||0))}`);
-              } else {
-                const entry=dayData[name]||{};
-                lines.push(` Ads Spent: ${fmtRM(entry.adsSpent||0)}`);
-                lines.push(` Sales: ${fmtRM(entry.sales||0)}`);
-              }
-              return lines;
-            },
-          },
-        },
+            label:c=>c.dataset.type==='line'?` ${c.dataset.label}`:` ROAS: ${fmt(c.parsed.y)}`,
+          }},
       },
       scales:{
         x:{ticks:{color:'#94a3b8',font:{size:11}},grid:{color:'#1e293b'}},
@@ -617,10 +587,7 @@ function updateChartBadge(){
 
 function renderTable(products){
   const tbody=document.getElementById('perfTableBody'); tbody.innerHTML='';
-  let sorted=[...products];
-  if (state.sortOrder==='desc') sorted.sort((a,b)=>b.avgROAS-a.avgROAS);
-  else if (state.sortOrder==='asc') sorted.sort((a,b)=>a.avgROAS-b.avgROAS);
-  sorted.forEach(p=>{
+  products.forEach(p=>{
     const {label,cls}=roasRating(p.avgROAS);
     const tr=document.createElement('tr');
     tr.innerHTML=`<td style="font-weight:600">${p.name}</td>
@@ -632,54 +599,54 @@ function renderTable(products){
 
 function renderRanks(products){
   const s=[...products].sort((a,b)=>b.avgROAS-a.avgROAS);
-  const rl=(id,items)=>{
-    const ul=document.getElementById(id); ul.innerHTML='';
-    items.forEach((p,i)=>{
-      const {cls}=roasRating(p.avgROAS);
-      const li=document.createElement('li'); li.className='rank-item';
-      li.innerHTML=`<span class="rank-num">${i+1}</span>
-        <span class="rank-name">${p.name}</span>
-        <span class="roas-badge ${cls}" style="font-size:.76rem">${fmt(p.avgROAS)}</span>`;
-      ul.appendChild(li);
-    });
-  };
-  rl('top5List',  s.slice(0,5));
-  rl('worst5List',s.slice(-5).reverse());
+  renderRankList('top5List',  s.slice(0,5));
+  renderRankList('worst5List',s.slice(-5).reverse());
+}
+function renderRankList(id,items){
+  const ul=document.getElementById(id); ul.innerHTML='';
+  items.forEach((p,i)=>{
+    const {cls}=roasRating(p.avgROAS);
+    const li=document.createElement('li'); li.className='rank-item';
+    li.innerHTML=`<span class="rank-num">${i+1}</span>
+      <span class="rank-name">${p.name}</span>
+      <span class="roas-badge ${cls}" style="font-size:.76rem">${fmt(p.avgROAS)}</span>`;
+    ul.appendChild(li);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
 // COMPARE
 // ═══════════════════════════════════════════════════════════════
 function renderCompare(){
-  const selected=[...state.compareMonths];
-  const noData  =document.getElementById('compareNoData');
-  const chartW  =document.getElementById('compareChartWrap');
-  const tableW  =document.getElementById('compareTableWrap');
+  const selected =[...state.compareMonths];
+  const noData   =document.getElementById('compareNoData');
+  const chartWrap=document.getElementById('compareChartWrap');
+  const tableWrap=document.getElementById('compareTableWrap');
   buildComparePicker();
 
   if (selected.length<2){
-    noData.style.display='flex';chartW.style.display='none';tableW.style.display='none';
+    noData.style.display='flex';chartWrap.style.display='none';tableWrap.style.display='none';
     document.getElementById('compareNoMsg').textContent=
       selected.length===0?'Select at least 2 months.':'Select one more month.';
     return;
   }
-  noData.style.display='none';chartW.style.display='block';tableW.style.display='block';
+  noData.style.display='none';chartWrap.style.display='block';tableWrap.style.display='block';
 
-  const mD=selected.map(name=>{
-    const md=state.allData.find(m=>m.monthName===name);
+  const monthsData=selected.map(name=>{
+    const md =state.allData.find(m=>m.monthName===name);
     const idx=state.allData.indexOf(md);
     return md?{name,color:MONTH_COLORS[idx%MONTH_COLORS.length],slice:getFullMonthSlice(md)}:null;
   }).filter(Boolean);
 
-  const allNames=[...new Set(mD.flatMap(m=>m.slice.products.map(p=>p.name)))];
+  const allNames=[...new Set(monthsData.flatMap(m=>m.slice.products.map(p=>p.name)))];
 
   if (state.compareChart) state.compareChart.destroy();
   const ctx=document.getElementById('compareChart').getContext('2d');
   state.compareChart=new Chart(ctx,{type:'bar',
-    data:{labels:allNames,datasets:mD.map(m=>({
-      label:m.name,
-      data:allNames.map(n=>{const p=m.slice.products.find(p=>p.name===n);return p?+p.avgROAS.toFixed(2):0;}),
-      backgroundColor:m.color+'BB',borderColor:m.color,borderWidth:1,borderRadius:4,
+    data:{labels:allNames,datasets:monthsData.map(md=>({
+      label:md.name,
+      data:allNames.map(n=>{const p=md.slice.products.find(p=>p.name===n);return p?+p.avgROAS.toFixed(2):0;}),
+      backgroundColor:md.color+'BB',borderColor:md.color,borderWidth:1,borderRadius:4,
     }))},
     options:{responsive:true,maintainAspectRatio:false,
       interaction:{mode:'index',intersect:false},
@@ -698,21 +665,21 @@ function renderCompare(){
 
   const thead=document.getElementById('compareTableHead');
   const tbody=document.getElementById('compareTableBody');
-  thead.innerHTML='<tr><th>Product</th>'+mD.map(m=>`<th style="color:${m.color}">${m.name}</th>`).join('')+'<th>Best</th></tr>';
+  thead.innerHTML='<tr><th>Product</th>'+monthsData.map(m=>`<th style="color:${m.color}">${m.name}</th>`).join('')+'<th>Best</th></tr>';
   tbody.innerHTML='';
   allNames.forEach(name=>{
-    const vals=mD.map(m=>{const p=m.slice.products.find(p=>p.name===name);return p?p.avgROAS:null;});
+    const vals=monthsData.map(m=>{const p=m.slice.products.find(p=>p.name===name);return p?p.avgROAS:null;});
     const maxV=Math.max(...vals.filter(v=>v!==null));
     const bi  =vals.indexOf(maxV);
-    const cells=vals.map(v=>{
+    const cells=vals.map((v)=>{
       const {cls}=v!==null?roasRating(v):{cls:''};
       return `<td class="${v===maxV&&v>0?'compare-best':''}"><span class="roas-badge ${cls}">${v!==null?fmt(v):'—'}</span></td>`;
     }).join('');
-    tbody.innerHTML+=`<tr><td style="font-weight:600">${name}</td>${cells}<td><span style="color:${mD[bi]?.color};font-weight:700">${maxV>0?(mD[bi]?.name||'—'):'—'}</span></td></tr>`;
+    tbody.innerHTML+=`<tr><td style="font-weight:600">${name}</td>${cells}<td><span style="color:${monthsData[bi]?.color};font-weight:700">${maxV>0?(monthsData[bi]?.name||'—'):'—'}</span></td></tr>`;
   });
-  const gtV=mD.map(m=>m.slice.grandTotal.avgROAS);
+  const gtV=monthsData.map(m=>m.slice.grandTotal.avgROAS);
   const gtMax=Math.max(...gtV),gtBi=gtV.indexOf(gtMax);
-  tbody.innerHTML+=`<tr class="compare-gt"><td style="font-weight:700">Grand Total</td>${gtV.map((v,i)=>`<td class="${v===gtMax?'compare-best':''}"><strong style="color:#f1f5f9">${fmt(v)}</strong></td>`).join('')}<td><span style="color:${mD[gtBi]?.color};font-weight:700">${mD[gtBi]?.name||'—'}</span></td></tr>`;
+  tbody.innerHTML+=`<tr class="compare-gt"><td style="font-weight:700">Grand Total</td>${gtV.map((v,i)=>`<td class="${v===gtMax?'compare-best':''}"><strong style="color:#f1f5f9">${fmt(v)}</strong></td>`).join('')}<td><span style="color:${monthsData[gtBi]?.color};font-weight:700">${monthsData[gtBi]?.name||'—'}</span></td></tr>`;
 }
 
 function buildComparePicker(){
