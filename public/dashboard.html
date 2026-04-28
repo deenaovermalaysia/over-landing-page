@@ -9,6 +9,7 @@
 </head>
 <body class="dashboard-body">
 
+  <!-- ── Topbar ───────────────────────────────────────────── -->
   <header class="topbar">
     <div class="topbar-left">
       <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
@@ -19,6 +20,13 @@
       <span class="topbar-title">Ads Dashboard</span>
     </div>
     <div class="topbar-right">
+      <button class="btn-compare" id="compareToggle">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+        Compare Months
+      </button>
       <div class="topbar-updated">
         <span class="updated-dot"></span>
         Last updated: <strong id="lastUpdated">—</strong>
@@ -39,6 +47,7 @@
 
   <div class="dashboard-layout">
 
+    <!-- ── Sidebar ──────────────────────────────────────────── -->
     <aside class="sidebar">
 
       <div class="sidebar-section">
@@ -57,20 +66,29 @@
         </select>
       </div>
 
+      <!-- Date Range — double-click to open calendar -->
       <div class="sidebar-section">
         <p class="sidebar-heading">Date Range</p>
-        <div class="date-range-wrap">
-          <label class="date-label">From Day</label>
-          <input type="number" id="dateFrom" class="date-input" min="1" max="31" value="1" />
-          <label class="date-label">To Day</label>
-          <input type="number" id="dateTo"   class="date-input" min="1" max="31" value="31" />
-          <button class="btn-apply-date" id="applyDateBtn">Apply Range</button>
-        </div>
-        <p class="date-hint">e.g. Day 1–10 shows first 10 days</p>
+        <button class="date-range-trigger" id="dateRangeTrigger" title="Double-click to open calendar">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <span id="dateRangeLabel">Full Month</span>
+        </button>
+        <p class="date-hint">Double-click to open calendar</p>
+
+        <!-- Calendar Popup -->
+        <div class="cal-popup" id="calPopup" style="display:none;"></div>
       </div>
 
+      <!-- Products -->
       <div class="sidebar-section">
-        <p class="sidebar-heading">Show Products</p>
+        <p class="sidebar-heading">Products</p>
+        <div class="bulk-btns">
+          <button class="bulk-btn" onclick="bulkToggle(true)">✓ All</button>
+          <button class="bulk-btn bulk-btn--outline" onclick="bulkToggle(false)">✕ None</button>
+        </div>
         <div id="productToggles" class="product-toggles"></div>
       </div>
 
@@ -86,13 +104,13 @@
 
     </aside>
 
+    <!-- ── Main Content ──────────────────────────────────────── -->
     <main class="main-content">
 
       <div id="loadingState" class="state-overlay">
         <div class="spinner"></div>
         <p>Fetching data from Google Sheets...</p>
       </div>
-
       <div id="errorState" class="state-overlay" style="display:none;">
         <p style="color:#ef4444;font-size:1.1rem;">⚠ Failed to load data</p>
         <p id="errorMsg" style="color:#94a3b8;margin-top:4px;"></p>
@@ -101,6 +119,7 @@
 
       <div id="dashboardContent" style="display:none;">
 
+        <!-- Stat Cards -->
         <div class="stat-cards">
           <div class="stat-card">
             <p class="stat-label">Overall Avg ROAS</p>
@@ -124,33 +143,24 @@
           </div>
         </div>
 
+        <!-- Line Chart -->
         <div class="card">
           <div class="card-header">
             <h2 class="card-title">Daily ROAS Trend</h2>
             <span class="card-badge" id="chartBadge">—</span>
           </div>
-          <div class="chart-wrap">
-            <canvas id="roasChart"></canvas>
-          </div>
+          <div class="chart-wrap"><canvas id="roasChart"></canvas></div>
         </div>
 
+        <!-- Table + Rankings -->
         <div class="bottom-grid">
           <div class="card card--table">
-            <div class="card-header">
-              <h2 class="card-title">Product Performance</h2>
-            </div>
+            <div class="card-header"><h2 class="card-title">Product Performance</h2></div>
             <table class="perf-table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>Avg ROAS</th>
-                  <th>Rating</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Product</th><th>Avg ROAS</th><th>Rating</th></tr></thead>
               <tbody id="perfTableBody"></tbody>
             </table>
           </div>
-
           <div class="rank-col">
             <div class="card">
               <div class="card-header"><h2 class="card-title">🏆 Top 5</h2></div>
@@ -162,6 +172,42 @@
             </div>
           </div>
         </div>
+
+        <!-- ── Compare Panel ─────────────────────────────── -->
+        <div id="comparePanel" style="display:none;" class="compare-panel">
+          <div class="compare-panel-header">
+            <h2 class="card-title">📊 Month Comparison
+              <span class="card-badge" style="margin-left:8px">Same platform · Same date range</span>
+            </h2>
+          </div>
+
+          <p class="compare-sub">Select months to compare (min 2)</p>
+          <div id="compareMonthPicker" class="compare-month-picker"></div>
+
+          <div id="compareNoData" class="state-overlay" style="min-height:80px;font-size:0.9rem;">
+            Select at least 2 months to compare.
+          </div>
+
+          <div id="compareChartWrap" style="display:none;" class="card" style="margin-top:16px;">
+            <div class="card-header">
+              <h2 class="card-title">Avg ROAS by Product</h2>
+              <span class="card-badge">Grouped by month</span>
+            </div>
+            <div class="chart-wrap"><canvas id="compareChart"></canvas></div>
+          </div>
+
+          <div id="compareTableWrap" style="display:none;" class="card" style="margin-top:16px;">
+            <div class="card-header"><h2 class="card-title">Comparison Table</h2></div>
+            <div style="overflow-x:auto;">
+              <table class="perf-table compare-table">
+                <thead id="compareTableHead"></thead>
+                <tbody id="compareTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+        <!-- end comparePanel -->
 
       </div>
     </main>
