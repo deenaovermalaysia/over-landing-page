@@ -7,17 +7,14 @@
   <link rel="stylesheet" href="/css/style.css"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    /* ── Page Tabs ─────────────────────── */
     .page-tabs{display:flex;align-items:stretch;background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;position:sticky;top:60px;z-index:100;}
     .page-tab{padding:11px 20px;font-size:.83rem;font-weight:600;color:var(--muted);background:transparent;border:none;border-bottom:3px solid transparent;cursor:pointer;transition:all .2s;white-space:nowrap;}
     .page-tab:hover{color:var(--text);}
     .page-tab.active{color:var(--accent2);border-bottom-color:var(--accent2);}
-    /* ── Page visibility ───────────────── */
     .page-view{display:none;flex:1;min-height:0;}
     .page-view.active{display:flex;}
     .blank-page{display:none;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:80px 24px;color:var(--muted);text-align:center;}
     .blank-page.active{display:flex;}
-    /* ── Campaign table ────────────────── */
     .camp-table th{white-space:nowrap;}
     .camp-table td{white-space:nowrap;vertical-align:middle;}
     .camp-row-great td{background:rgba(34,197,94,.08);}
@@ -34,43 +31,16 @@
     .type-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700;}
     .type-campaign{background:rgba(99,102,241,.18);color:#a5b4fc;}
     .type-launch  {background:rgba(168,85,247,.18);color:#c084fc;}
-
-    /* ── Year pill picker ──────────────────── */
     .camp-year-picker{display:flex;flex-wrap:wrap;gap:5px;}
-    .camp-year-btn{
-      padding:5px 12px;border-radius:999px;border:1px solid var(--border);
-      background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;
-      cursor:pointer;transition:all .2s;
-    }
+    .camp-year-btn{padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s;}
     .camp-year-btn:hover{border-color:var(--accent2);color:var(--text);}
     .camp-year-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
-
-    /* ── Month grid ────────────────────────── */
-    .camp-month-grid{
-      display:grid;grid-template-columns:repeat(4,1fr);gap:3px;
-    }
-    .camp-month-cell{
-      padding:6px 2px;text-align:center;border-radius:6px;
-      font-size:.68rem;font-weight:600;cursor:pointer;
-      border:1px solid transparent;transition:all .15s;
-    }
-    /* Has data in selected year */
-    .camp-month-cell.has-data{
-      background:rgba(99,102,241,.18);color:var(--text);
-      border-color:rgba(99,102,241,.3);
-    }
-    .camp-month-cell.has-data:hover{
-      background:rgba(99,102,241,.35);
-    }
-    /* Active / selected month */
-    .camp-month-cell.selected{
-      background:var(--accent)!important;color:#fff!important;
-      border-color:var(--accent)!important;
-    }
-    /* No data in selected year */
-    .camp-month-cell.no-data{
-      color:#334155;cursor:default;opacity:.38;
-    }
+    .camp-month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;}
+    .camp-month-cell{padding:6px 2px;text-align:center;border-radius:6px;font-size:.68rem;font-weight:600;cursor:pointer;border:1px solid transparent;transition:all .15s;}
+    .camp-month-cell.has-data{background:var(--surface2);color:var(--text);border-color:var(--border);}
+    .camp-month-cell.has-data:hover{background:var(--border);}
+    .camp-month-cell.selected{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;}
+    .camp-month-cell.no-data{color:#334155;cursor:default;opacity:.38;}
     .camp-month-cell.no-data:hover{background:transparent;}
   </style>
 </head>
@@ -105,21 +75,18 @@
   </div>
 </header>
 
-<!-- ── Page Tab Bar ──────── -->
 <nav class="page-tabs">
   <button class="page-tab" data-page="daily"    onclick="switchPage('daily')">📅 Daily ROAS</button>
-  <button class="page-tab active" data-page="product"  onclick="switchPage('product')">📊 Product Daily ROAS</button>
+  <button class="page-tab active" data-page="product" onclick="switchPage('product')">📊 Product Daily ROAS</button>
   <button class="page-tab" data-page="campaign" onclick="switchPage('campaign')">🎯 Campaign Performance</button>
 </nav>
 
-<!-- ══ Daily ROAS (placeholder) ══ -->
 <div class="blank-page" id="page-daily">
   <div style="font-size:2.5rem">📅</div>
   <h2 style="font-size:1.1rem;font-weight:700;color:var(--text)">Daily ROAS</h2>
   <p style="font-size:.85rem;max-width:360px">Coming soon — will show daily-level ROAS data from the Daily tab.</p>
 </div>
 
-<!-- ══ Campaign Performance ══ -->
 <div class="page-view" id="page-campaign">
   <aside class="sidebar">
     <div class="sb-section">
@@ -157,7 +124,6 @@
       </div>
     </div>
   </aside>
-
   <main class="main-content">
     <div id="campLoadingState" class="state-overlay">
       <div class="spinner"></div><p>Loading campaign data...</p>
@@ -168,7 +134,6 @@
       <button class="btn-retry" onclick="loadCampaigns()">Retry</button>
     </div>
     <div id="campContent" style="display:none;">
-      <!-- Stat Cards -->
       <div class="stat-cards" style="margin-bottom:20px;">
         <div class="stat-card">
           <p class="stat-label">Total Shown</p>
@@ -191,7 +156,6 @@
           <p class="stat-sub">during &lt; before</p>
         </div>
       </div>
-      <!-- Chart -->
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">Units Sold — Before / During / After</h2>
@@ -199,7 +163,6 @@
         </div>
         <div class="chart-wrap" style="height:340px;"><canvas id="campChart"></canvas></div>
       </div>
-      <!-- Table -->
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">Campaign Details</h2>
@@ -222,9 +185,8 @@
       </div>
     </div>
   </main>
-</div><!-- end page-campaign -->
+</div>
 
-<!-- ══ Product Daily ROAS (current dashboard) ══ -->
 <div class="page-view active" id="page-product">
 <div class="dashboard-layout">
 
@@ -398,11 +360,11 @@
 function switchPage(page) {
   document.querySelectorAll('.page-view,.blank-page').forEach(el=>el.classList.remove('active'));
   document.querySelectorAll('.page-tab').forEach(b=>b.classList.remove('active'));
-  const el = document.getElementById('page-'+page);
-  if (el) el.classList.add('active');
-  const btn = document.querySelector('.page-tab[data-page="'+page+'"]');
-  if (btn) btn.classList.add('active');
-  if (page==='campaign') loadCampaigns();
+  const el=document.getElementById('page-'+page);
+  if(el)el.classList.add('active');
+  const btn=document.querySelector('.page-tab[data-page="'+page+'"]');
+  if(btn)btn.classList.add('active');
+  if(page==='campaign')loadCampaigns();
 }
 </script>
 </body>
