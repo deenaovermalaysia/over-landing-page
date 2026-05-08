@@ -808,41 +808,42 @@ function fmt(n){
 // ═══════════════════════════════════════════════════════════════
 // CAMPAIGN PERFORMANCE
 // ═══════════════════════════════════════════════════════════════
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_FULL  = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
 const camp = {
-  allData:    [],
-  filtered:   [],
-  chart:      null,
-  loaded:     false,
-  filterType: '',
-  filterPlat: '',
-  filterMonth:'',
+  allData:     [],
+  filtered:    [],
+  chart:       null,
+  loaded:      false,
+  filterYear:  '',     // '' = All
+  filterMonth: '',     // '' = All (full month name)
+  filterType:  '',
+  filterPlat:  '',
 };
 
 // ── Load ────────────────────────────────────────────────────────
 async function loadCampaigns() {
-  if (camp.loaded) { renderCampaigns(); return; }
+  if (camp.loaded) { buildCampPickers(); filterCampaigns(); return; }
 
   document.getElementById('campLoadingState').style.display = 'flex';
   document.getElementById('campErrorState').style.display   = 'none';
   document.getElementById('campContent').style.display      = 'none';
 
   try {
-    const res = await fetch('/api/campaigns', { credentials: 'same-origin' });
-    if (res.status === 401) { window.location.href = '/login.html'; return; }
+    const res = await fetch('/api/campaigns', { credentials:'same-origin' });
+    if (res.status === 401) { window.location.href='/login.html'; return; }
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.detail || json.error || 'Unknown');
 
     camp.allData = json.data;
     camp.loaded  = true;
 
-    // Populate month dropdown
-    const months = [...new Set(json.data.map(c => c.month).filter(Boolean))];
-    const sel = document.getElementById('campMonthFilter');
-    sel.innerHTML = '<option value="">All Months</option>';
-    months.forEach(m => { const o = document.createElement('option'); o.value=m; o.textContent=m; sel.appendChild(o); });
-
     document.getElementById('campLoadingState').style.display = 'none';
     document.getElementById('campContent').style.display      = 'block';
+
+    buildCampPickers();
     filterCampaigns();
   } catch(err) {
     console.error(err);
@@ -853,89 +854,170 @@ async function loadCampaigns() {
   }
 }
 
-// ── Filters ─────────────────────────────────────────────────────
+// ── Build Year + Month pickers ──────────────────────────────────
+function buildCampPickers() {
+  // Unique sorted years
+  const years = [...new Set(camp.allData.map(c => c.year).filter(Boolean))].sort();
+
+  // Year pills
+  const yearDiv = document.getElementById('campYearPicker');
+  yearDiv.innerHTML = '';
+
+  const allYearBtn = document.createElement('button');
+  allYearBtn.className = 'camp-year-btn' + (camp.filterYear === '' ? ' active' : '');
+  allYearBtn.textContent = 'All';
+  allYearBtn.onclick = () => setCampYear('');
+  yearDiv.appendChild(allYearBtn);
+
+  years.forEach(y => {
+    const btn = document.createElement('button');
+    btn.className = 'camp-year-btn' + (camp.filterYear === y ? ' active' : '');
+    btn.textContent = y;
+    btn.onclick = () => setCampYear(y);
+    yearDiv.appendChild(btn);
+  });
+
+  buildMonthGrid();
+}
+
+function buildMonthGrid() {
+  // Which months have data in the selected year (or all years if filterYear='')
+  const relevantCamps = camp.filterYear
+    ? camp.allData.filter(c => c.year === camp.filterYear)
+    : camp.allData;
+
+  const monthsWithData = new Set(
+    relevantCamps.map(c => c.month).filter(Boolean)
+  );
+
+  const grid = document.getElementById('campMonthGrid');
+  grid.innerHTML = '';
+
+  MONTH_SHORT.forEach((short, i) => {
+    const full = MONTH_FULL[i];
+    const hasData = monthsWithData.has(full);
+    const isSelected = camp.filterMonth === full;
+
+    const cell = document.createElement('div');
+    cell.className = 'camp-month-cell' +
+      (isSelected ? ' selected' : hasData ? ' has-data' : ' no-data');
+    cell.textContent = short;
+    cell.title = hasData
+      ? `${full}${camp.filterYear ? ' ' + camp.filterYear : ''} — click to filter`
+      : `${full} — no campaigns`;
+
+    if (hasData) {
+      cell.onclick = () => {
+        // Toggle: clicking selected month deselects it
+        setCampMonth(camp.filterMonth === full ? '' : full);
+      };
+    }
+
+    grid.appendChild(cell);
+  });
+}
+
+function setCampYear(year) {
+  camp.filterYear  = year;
+  camp.filterMonth = ''; // reset month when year changes
+  buildCampPickers();
+  filterCampaigns();
+}
+
+function setCampMonth(month) {
+  camp.filterMonth = month;
+  buildMonthGrid(); // rebuild to update selected state
+  filterCampaigns();
+}
+
+// ── Type / Platform filters ──────────────────────────────────────
 function setCampFilter(kind, btn) {
   const cls = kind === 'type' ? 'camp-type-btn' : 'camp-plat-btn';
   document.querySelectorAll('.'+cls).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   if (kind === 'type') camp.filterType = btn.dataset.v;
-  else                 camp.filterPlat = btn.dataset.v;
+  else                  camp.filterPlat = btn.dataset.v;
   filterCampaigns();
 }
 
+// ── Apply all filters ────────────────────────────────────────────
 function filterCampaigns() {
-  camp.filterMonth = document.getElementById('campMonthFilter').value;
-
   camp.filtered = camp.allData.filter(c => {
-    if (camp.filterMonth && c.month !== camp.filterMonth) return false;
-    if (camp.filterType  && c.type  !== camp.filterType)  return false;
-    if (camp.filterPlat  && !c.platforms.some(p => p.includes(camp.filterPlat))) return false;
+    if (camp.filterYear  && c.year  !== camp.filterYear)                              return false;
+    if (camp.filterMonth && c.month !== camp.filterMonth)                             return false;
+    if (camp.filterType  && c.type  !== camp.filterType)                              return false;
+    if (camp.filterPlat  && !c.platforms.some(p => p.includes(camp.filterPlat)))     return false;
     return true;
   });
-
   renderCampaigns();
 }
 
-// ── Lift calculation ─────────────────────────────────────────────
+// ── Lift helpers ─────────────────────────────────────────────────
 function calcLift(before, during) {
   if (before === null || during === null) return null;
-  if (before === 0) return during > 0 ? 999 : null; // infinite lift
+  if (before === 0) return during > 0 ? 999 : null;
   return ((during - before) / before) * 100;
 }
 
 function fmtLift(lift) {
-  if (lift === null) return { text: 'N/A', cls: 'lift-na' };
-  if (lift === 999)  return { text: '∞',   cls: 'lift-great' };
+  if (lift === null) return { text:'N/A',  cls:'lift-na'    };
+  if (lift === 999)  return { text:'∞',    cls:'lift-great' };
   const sign = lift >= 0 ? '+' : '';
   const cls  = lift > 20 ? 'lift-great' : lift > 0 ? 'lift-good' : 'lift-bad';
-  return { text: `${sign}${lift.toFixed(1)}%`, cls };
+  return { text:`${sign}${lift.toFixed(1)}%`, cls };
 }
 
 function fmtUnits(n) { return n === null ? '—' : n.toLocaleString(); }
 
-// ── Render ──────────────────────────────────────────────────────
+// ── Render ───────────────────────────────────────────────────────
 function renderCampaigns() {
   const data = camp.filtered;
 
-  // ── Stat cards ──
-  const withData = data.filter(c => c.unitsBefore !== null && c.unitsDuring !== null);
-  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring)).filter(l => l !== null && l !== 999);
-  const avgLift  = lifts.length ? lifts.reduce((a,b)=>a+b,0)/lifts.length : null;
-  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring)||0) < 0).length;
+  // Stat cards
+  const withData  = data.filter(c => c.unitsBefore !== null && c.unitsDuring !== null);
+  const lifts     = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring)).filter(l => l !== null && l !== 999);
+  const avgLift   = lifts.length ? lifts.reduce((a,b)=>a+b,0)/lifts.length : null;
+  const declined  = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring)||0) < 0).length;
 
-  let bestLift = null, bestName = '—';
+  let bestLift=null, bestName='—';
   withData.forEach(c => {
     const l = calcLift(c.unitsBefore, c.unitsDuring);
-    if (l !== null && (bestLift === null || l > bestLift)) { bestLift = l; bestName = c.name; }
+    if (l !== null && (bestLift===null || l>bestLift)) { bestLift=l; bestName=c.name; }
   });
 
-  document.getElementById('campStatTotal').textContent   = data.length;
+  document.getElementById('campStatTotal').textContent    = data.length;
   document.getElementById('campStatSub').textContent      = `of ${camp.allData.length} total`;
-  document.getElementById('campStatBest').textContent     = bestLift !== null ? fmtLift(bestLift).text : '—';
+  document.getElementById('campStatBest').textContent     = bestLift!==null ? fmtLift(bestLift).text : '—';
   document.getElementById('campStatBestName').textContent = bestName;
-  document.getElementById('campStatAvg').textContent      = avgLift !== null ? fmtLift(avgLift).text : '—';
+  document.getElementById('campStatAvg').textContent      = avgLift!==null ? fmtLift(avgLift).text : '—';
   document.getElementById('campStatDecline').textContent  = declined;
 
-  const badge = [camp.filterMonth, camp.filterType, camp.filterPlat].filter(Boolean).join(' · ') || 'All';
-  document.getElementById('campChartBadge').textContent  = badge;
-  document.getElementById('campTableCount').textContent  = `${data.length} campaigns`;
+  // Chart badge
+  const parts = [];
+  if (camp.filterYear)  parts.push(camp.filterYear);
+  if (camp.filterMonth) parts.push(camp.filterMonth);
+  if (camp.filterType)  parts.push(camp.filterType);
+  if (camp.filterPlat)  parts.push(camp.filterPlat);
+  const badge = parts.length ? parts.join(' · ') : 'All campaigns';
+  document.getElementById('campChartBadge').textContent = badge;
+  document.getElementById('campTableCount').textContent = `${data.length} campaigns`;
 
-  // ── Bar chart ──
+  // Bar chart
   if (camp.chart) camp.chart.destroy();
   const ctx = document.getElementById('campChart').getContext('2d');
-  const labels = data.map(c => c.name.length > 28 ? c.name.slice(0,26)+'…' : c.name);
+  const labels = data.map(c => c.name.length > 26 ? c.name.slice(0,24)+'…' : c.name);
 
   camp.chart = new Chart(ctx, {
-    type: 'bar',
-    data: {
+    type:'bar',
+    data:{
       labels,
-      datasets: [
+      datasets:[
         { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.55)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
         { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:'rgba(99,102,241,.75)',  borderColor:'#6366f1', borderWidth:1, borderRadius:3 },
         { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(34,197,94,.6)',   borderColor:'#22c55e', borderWidth:1, borderRadius:3 },
       ],
     },
-    options: {
+    options:{
       responsive:true, maintainAspectRatio:false,
       interaction:{ mode:'index', intersect:false },
       plugins:{
@@ -947,7 +1029,7 @@ function renderCampaigns() {
             title: items => data[items[0]?.dataIndex]?.name || '',
             afterBody: items => {
               const c = data[items[0]?.dataIndex];
-              if (!c) return '';
+              if (!c) return [];
               const l = calcLift(c.unitsBefore, c.unitsDuring);
               return l !== null ? [`Lift: ${fmtLift(l).text}`] : [];
             },
@@ -961,7 +1043,7 @@ function renderCampaigns() {
     },
   });
 
-  // ── Table ──
+  // Table
   const tbody = document.getElementById('campTableBody');
   tbody.innerHTML = '';
 
@@ -972,34 +1054,33 @@ function renderCampaigns() {
 
   data.forEach(c => {
     const lift = calcLift(c.unitsBefore, c.unitsDuring);
-    const { text: liftText, cls: liftCls } = fmtLift(lift);
-
-    const rowCls = lift === null ? ''
-                 : lift > 20    ? 'camp-row-great'
-                 : lift > 0     ? 'camp-row-good'
-                 :                'camp-row-bad';
+    const { text:liftText, cls:liftCls } = fmtLift(lift);
+    const rowCls = lift===null?'' : lift>20?'camp-row-great' : lift>0?'camp-row-good' : 'camp-row-bad';
 
     const platHtml = c.platforms.map(p => {
-      const pcls = p.includes('MY Web') ? 'plat-my' : p.includes('SG') ? 'plat-sg' : 'plat-off';
+      const pcls = p.includes('MY Web')?'plat-my' : p.includes('SG')?'plat-sg' : 'plat-off';
       return `<span class="plat-badge ${pcls}">${p}</span>`;
     }).join('');
 
-    const typeCls = c.type === 'Launch' ? 'type-launch' : 'type-campaign';
+    const typeCls = c.type==='Launch'?'type-launch':'type-campaign';
+    const period = c.duringRange || (c.startDate
+      ? c.startDate + (c.endDate && c.endDate!=='-' ? ' – '+c.endDate : '')
+      : '—');
 
     const tr = document.createElement('tr');
     tr.className = rowCls;
     tr.innerHTML = `
-      <td>${c.month || '—'}</td>
+      <td>${c.month ? c.month+(c.year?' '+c.year:'') : '—'}</td>
       <td><span class="type-badge ${typeCls}">${c.type}</span></td>
-      <td style="max-width:220px;white-space:normal;font-weight:600;font-size:.82rem">${c.name}</td>
+      <td style="max-width:200px;white-space:normal;font-weight:600;font-size:.82rem">${c.name}</td>
       <td>${platHtml}</td>
-      <td style="font-size:.75rem;color:var(--muted)">${c.duringRange || (c.startDate ? c.startDate+(c.endDate&&c.endDate!=='-'?' – '+c.endDate:'') : '—')}</td>
+      <td style="font-size:.73rem;color:var(--muted);min-width:130px">${period}</td>
       <td style="text-align:right">${fmtUnits(c.unitsBefore)}</td>
       <td style="text-align:right;font-weight:700">${fmtUnits(c.unitsDuring)}</td>
       <td style="text-align:right">${fmtUnits(c.unitsAfter)}</td>
       <td style="text-align:right"><span class="${liftCls}">${liftText}</span></td>
-      <td style="font-size:.78rem">${c.giftItem || '—'}</td>
-      <td style="text-align:right">${c.giftClaimed !== null ? c.giftClaimed : '—'}</td>
+      <td style="font-size:.78rem">${c.giftItem||'—'}</td>
+      <td style="text-align:right">${c.giftClaimed!==null?c.giftClaimed:'—'}</td>
     `;
     tbody.appendChild(tr);
   });
