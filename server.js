@@ -214,4 +214,112 @@ app.get('/api/roas', requireAuth, async (req, res) => {
   }
 });
 
+
+// ─── Parse Campaign Performances ─────────────────────────────
+const MONTH_NAMES_LIST = ['January','February','March','April','May','June',
+                           'July','August','September','October','November','December'];
+
+function parseCampaignData(rows) {
+  const campaigns = [];
+  let currentMonth = '';
+  let pendingCampaign = null;
+
+  const cleanNum = s => {
+    const str = String(s || '').trim();
+    if (str === '-' || str === '' || str === 'NA') return null;
+    const n = parseFloat(str.replace(/[^0-9.]/g, ''));
+    return isNaN(n) ? null : n;
+  };
+
+  const cleanStr = s => String(s || '').trim();
+
+  rows.forEach(row => {
+    if (!row || row.length === 0) return;
+
+    const colA = cleanStr(row[0]);
+    const colB = cleanStr(row[1]);
+
+    // Skip header rows
+    if (colA === 'Type' || colB === 'Campaign') return;
+
+    // Check for month divider: A is empty, and any col has a month name
+    if (!colA) {
+      // Look for month name anywhere in the row
+      const rowText = row.map(c => cleanStr(c)).join(' ').toUpperCase();
+      const foundMonth = MONTH_NAMES_LIST.find(m => rowText.includes(m.toUpperCase()));
+
+      if (foundMonth) {
+        // It's a month divider row — save any pending and update month
+        if (pendingCampaign) { campaigns.push(pendingCampaign); pendingCampaign = null; }
+        currentMonth = foundMonth;
+        return;
+      }
+
+      // Otherwise it's a units data row for the pending campaign
+      if (pendingCampaign) {
+        pendingCampaign.unitsBefore = cleanNum(row[5]);
+        pendingCampaign.unitsDuring = cleanNum(row[6]);
+        pendingCampaign.unitsAfter  = cleanNum(row[7]);
+        campaigns.push(pendingCampaign);
+        pendingCampaign = null;
+      }
+      return;
+    }
+
+    // Campaign or Launch row
+    if (colA === 'Campaign' || colA === 'Launch') {
+      if (pendingCampaign) campaigns.push(pendingCampaign);
+
+      // Parse platform badges — they come as text like "MY Web  SG Web"
+      const rawPlatform = cleanStr(row[2]);
+      const platforms = [];
+      if (rawPlatform.includes('MY Web') || rawPlatform.includes('MY Web')) platforms.push('MY Web');
+      if (rawPlatform.includes('SG Web'))     platforms.push('SG Web');
+      if (rawPlatform.includes('MY Offline')) platforms.push('MY Offline');
+      if (platforms.length === 0 && rawPlatform) platforms.push(rawPlatform);
+
+      pendingCampaign = {
+        month:        currentMonth,
+        type:         colA,
+        name:         cleanStr(row[1]),
+        platforms,
+        startDate:    cleanStr(row[3]),
+        endDate:      cleanStr(row[4]),
+        beforeRange:  cleanStr(row[5]),
+        duringRange:  cleanStr(row[6]),
+        afterRange:   cleanStr(row[7]),
+        giftItem:     cleanStr(row[8]),
+        giftClaimed:  cleanNum(row[9]),
+        insight:      cleanStr(row[10]),
+        unitsBefore:  null,
+        unitsDuring:  null,
+        unitsAfter:   null,
+      };
+    }
+  });
+
+  if (pendingCampaign) campaigns.push(pendingCampaign);
+  return campaigns;
+}
+
+// ─── API: Campaign Performances ───────────────────────────────
+app.get('/api/campaigns', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range:         "'Campaign Performances'!A:K",
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+
+    const rows = response.data.values || [];
+    const data = parseCampaignData(rows);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[Campaign Error]', err.message);
+    res.status(500).json({ error: 'Failed to fetch campaign data', detail: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
