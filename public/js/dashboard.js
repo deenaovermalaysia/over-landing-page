@@ -804,3 +804,292 @@ function fmt(n){
   if (n===null||n===undefined||isNaN(n)) return '—';
   return Number(n).toFixed(2)+'x';
 }
+
+// ═══════════════════════════════════════════════════════════════
+// CAMPAIGN PERFORMANCE
+// ═══════════════════════════════════════════════════════════════
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_FULL  = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+const camp = {
+  allData:     [],
+  filtered:    [],
+  chart:       null,
+  loaded:      false,
+  filterYear:  '',
+  filterMonth: '',
+  filterType:  '',
+  filterPlat:  '',
+};
+
+// ── Load ────────────────────────────────────────────────────────
+async function loadCampaigns() {
+  if (camp.loaded) { buildCampPickers(); filterCampaigns(); return; }
+
+  document.getElementById('campLoadingState').style.display = 'flex';
+  document.getElementById('campErrorState').style.display   = 'none';
+  document.getElementById('campContent').style.display      = 'none';
+
+  try {
+    const res  = await fetch('/api/campaigns', { credentials:'same-origin' });
+    if (res.status === 401) { window.location.href='/login.html'; return; }
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.detail || json.error || 'Unknown');
+
+    camp.allData = json.data;
+    camp.loaded  = true;
+
+    document.getElementById('campLoadingState').style.display = 'none';
+    document.getElementById('campContent').style.display      = 'block';
+
+    buildCampPickers();
+    filterCampaigns();
+  } catch(err) {
+    console.error(err);
+    document.getElementById('campLoadingState').style.display = 'none';
+    document.getElementById('campErrorState').style.display   = 'flex';
+    document.getElementById('campErrorMsg').textContent = err.message;
+    camp.loaded = false;
+  }
+}
+
+// ── Build year pills + month grid ────────────────────────────────
+function buildCampPickers() {
+  const years = [...new Set(camp.allData.map(c => c.year).filter(Boolean))].sort();
+
+  // Year pills
+  const yearDiv = document.getElementById('campYearPicker');
+  yearDiv.innerHTML = '';
+
+  ['', ...years].forEach(y => {
+    const btn = document.createElement('button');
+    btn.className = 'camp-year-btn' + (camp.filterYear === y ? ' active' : '');
+    btn.textContent = y || 'All';
+    btn.onclick = () => setCampYear(y);
+    yearDiv.appendChild(btn);
+  });
+
+  buildMonthGrid();
+}
+
+function buildMonthGrid() {
+  // Which months have data in the selected year
+  const relevant = camp.filterYear
+    ? camp.allData.filter(c => c.year === camp.filterYear)
+    : camp.allData;
+
+  const monthsWithData = new Set(relevant.map(c => c.month).filter(Boolean));
+
+  const grid = document.getElementById('campMonthGrid');
+  grid.innerHTML = '';
+
+  MONTH_SHORT.forEach((short, i) => {
+    const full     = MONTH_FULL[i];
+    const hasData  = monthsWithData.has(full);
+    const selected = camp.filterMonth === full;
+
+    const cell = document.createElement('div');
+    // Priority: selected > has-data > no-data
+    cell.className = 'camp-month-cell ' + (selected ? 'selected' : hasData ? 'has-data' : 'no-data');
+    cell.textContent = short;
+    cell.title = hasData
+      ? (selected ? `Click to deselect ${full}` : `Filter to ${full}`)
+      : `No campaigns in ${full}${camp.filterYear ? ' '+camp.filterYear : ''}`;
+
+    if (hasData) {
+      cell.onclick = () => setCampMonth(camp.filterMonth === full ? '' : full);
+    }
+
+    grid.appendChild(cell);
+  });
+}
+
+function setCampYear(year) {
+  camp.filterYear  = year;
+  camp.filterMonth = '';   // reset month when year changes
+  buildCampPickers();
+  filterCampaigns();
+}
+
+function setCampMonth(month) {
+  camp.filterMonth = month;
+  buildMonthGrid();
+  filterCampaigns();
+}
+
+function setCampFilter(kind, btn) {
+  const cls = kind === 'type' ? 'camp-type-btn' : 'camp-plat-btn';
+  document.querySelectorAll('.' + cls).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (kind === 'type') camp.filterType = btn.dataset.v;
+  else                  camp.filterPlat = btn.dataset.v;
+  filterCampaigns();
+}
+
+function filterCampaigns() {
+  camp.filtered = camp.allData.filter(c => {
+    if (camp.filterYear  && c.year  !== camp.filterYear)                          return false;
+    if (camp.filterMonth && c.month !== camp.filterMonth)                         return false;
+    if (camp.filterType  && c.type  !== camp.filterType)                          return false;
+    if (camp.filterPlat  && !c.platforms.some(p => p.includes(camp.filterPlat))) return false;
+    return true;
+  });
+  renderCampaigns();
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+function calcLift(before, during) {
+  if (before === null || during === null) return null;
+  if (before === 0) return during > 0 ? 999 : null;
+  return ((during - before) / before) * 100;
+}
+
+function fmtLift(lift) {
+  if (lift === null) return { text:'N/A', cls:'lift-na'    };
+  if (lift === 999)  return { text:'∞',   cls:'lift-great' };
+  const sign = lift >= 0 ? '+' : '';
+  return {
+    text: `${sign}${lift.toFixed(1)}%`,
+    cls:  lift > 20 ? 'lift-great' : lift > 0 ? 'lift-good' : 'lift-bad',
+  };
+}
+
+function fmtUnits(n) { return n === null ? '—' : n.toLocaleString(); }
+
+// ── Render ───────────────────────────────────────────────────────
+function renderCampaigns() {
+  const data = camp.filtered;
+
+  // Stat cards
+  const withData = data.filter(c => c.unitsBefore !== null && c.unitsDuring !== null);
+  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring)).filter(l => l !== null && l !== 999);
+  const avgLift  = lifts.length ? lifts.reduce((a,b)=>a+b,0)/lifts.length : null;
+  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring) || 0) < 0).length;
+
+  let bestLift = null, bestName = '—';
+  withData.forEach(c => {
+    const l = calcLift(c.unitsBefore, c.unitsDuring);
+    if (l !== null && (bestLift === null || l > bestLift)) { bestLift = l; bestName = c.name; }
+  });
+
+  document.getElementById('campStatTotal').textContent    = data.length;
+  document.getElementById('campStatSub').textContent      = `of ${camp.allData.length} total`;
+  document.getElementById('campStatBest').textContent     = bestLift !== null ? fmtLift(bestLift).text : '—';
+  document.getElementById('campStatBestName').textContent = bestName;
+  document.getElementById('campStatAvg').textContent      = avgLift !== null ? fmtLift(avgLift).text : '—';
+  document.getElementById('campStatDecline').textContent  = declined;
+
+  const parts = [];
+  if (camp.filterYear)  parts.push(camp.filterYear);
+  if (camp.filterMonth) parts.push(camp.filterMonth);
+  if (camp.filterType)  parts.push(camp.filterType);
+  if (camp.filterPlat)  parts.push(camp.filterPlat);
+  const badge = parts.length ? parts.join(' · ') : 'All campaigns';
+  document.getElementById('campChartBadge').textContent = badge;
+  document.getElementById('campTableCount').textContent = `${data.length} campaigns`;
+
+  // ── Bar chart with detailed tooltip ─────────────────────────
+  if (camp.chart) camp.chart.destroy();
+  const ctx = document.getElementById('campChart').getContext('2d');
+  const labels = data.map(c => {
+    const period = c.month ? c.month.slice(0,3) + (c.year ? " '" + c.year.slice(2) : '') : '';
+    const name   = c.name.length > 22 ? c.name.slice(0,20) + '…' : c.name;
+    return period ? `${name} (${period})` : name;
+  });
+
+  camp.chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.55)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
+        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:'rgba(99,102,241,.75)',  borderColor:'#6366f1', borderWidth:1, borderRadius:3 },
+        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(34,197,94,.6)',   borderColor:'#22c55e', borderWidth:1, borderRadius:3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { position:'top', labels:{ color:'#94a3b8', font:{size:11}, padding:16 } },
+        tooltip: {
+          backgroundColor:'#1e293b', borderColor:'#334155', borderWidth:1,
+          titleColor:'#f1f5f9', bodyColor:'#94a3b8',
+          callbacks: {
+            // Full campaign name as tooltip title
+            title: items => {
+              const c = data[items[0]?.dataIndex];
+              if (!c) return '';
+              const period = [c.month, c.year].filter(Boolean).join(' ');
+              return [c.name, period].filter(Boolean).join('  ·  ');
+            },
+            // Before/During/After units
+            label: ctx => {
+              const labels = { Before:'Before', During:'During', After:'After' };
+              const n = ctx.parsed.y;
+              return ` ${ctx.dataset.label}: ${n === 0 ? '—' : n.toLocaleString()} units`;
+            },
+            // Date ranges + lift as footer
+            afterBody: items => {
+              const c = data[items[0]?.dataIndex];
+              if (!c) return [];
+              const lines = [];
+              if (c.beforeRange) lines.push(`📅 Before:  ${c.beforeRange}`);
+              if (c.duringRange) lines.push(`📅 During:  ${c.duringRange}`);
+              if (c.afterRange)  lines.push(`📅 After:   ${c.afterRange}`);
+              const lift = calcLift(c.unitsBefore, c.unitsDuring);
+              if (lift !== null) lines.push(`📈 Lift:    ${fmtLift(lift).text}`);
+              if (c.giftItem)   lines.push(`🎁 Gift:    ${c.giftItem}${c.giftClaimed ? ' ('+c.giftClaimed+' claimed)' : ''}`);
+              return lines;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { ticks:{ color:'#94a3b8', font:{size:9}, maxRotation:35 }, grid:{ color:'#1e293b' } },
+        y: { beginAtZero:true, ticks:{ color:'#64748b' }, grid:{ color:'#273549' } },
+      },
+    },
+  });
+
+  // ── Table ────────────────────────────────────────────────────
+  const tbody = document.getElementById('campTableBody');
+  tbody.innerHTML = '';
+
+  if (data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">No campaigns match filters.</td></tr>`;
+    return;
+  }
+
+  data.forEach(c => {
+    const lift = calcLift(c.unitsBefore, c.unitsDuring);
+    const { text:liftText, cls:liftCls } = fmtLift(lift);
+    const rowCls = lift===null?'' : lift>20?'camp-row-great' : lift>0?'camp-row-good' : 'camp-row-bad';
+
+    const platHtml = c.platforms.map(p => {
+      const pcls = p.includes('MY Web')?'plat-my':p.includes('SG')?'plat-sg':'plat-off';
+      return `<span class="plat-badge ${pcls}">${p}</span>`;
+    }).join('');
+
+    const period = [c.month, c.year].filter(Boolean).join(' ') || '—';
+    const duringStr = c.duringRange ||
+      (c.startDate ? c.startDate + (c.endDate && c.endDate!=='-' ? ' – '+c.endDate : '') : '—');
+
+    const tr = document.createElement('tr');
+    tr.className = rowCls;
+    tr.innerHTML = `
+      <td style="font-size:.78rem;font-weight:600">${period}</td>
+      <td><span class="type-badge type-${c.type.toLowerCase()}">${c.type}</span></td>
+      <td style="max-width:200px;white-space:normal;font-weight:600;font-size:.82rem">${c.name}</td>
+      <td>${platHtml}</td>
+      <td style="font-size:.73rem;color:var(--muted);min-width:130px">${duringStr}</td>
+      <td style="text-align:right">${fmtUnits(c.unitsBefore)}</td>
+      <td style="text-align:right;font-weight:700">${fmtUnits(c.unitsDuring)}</td>
+      <td style="text-align:right">${fmtUnits(c.unitsAfter)}</td>
+      <td style="text-align:right"><span class="${liftCls}">${liftText}</span></td>
+      <td style="font-size:.78rem">${c.giftItem||'—'}</td>
+      <td style="text-align:right">${c.giftClaimed!==null?c.giftClaimed:'—'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
