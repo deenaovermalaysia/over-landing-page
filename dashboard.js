@@ -857,8 +857,6 @@ async function loadCampaigns() {
 // ── Build year pills + month grid ────────────────────────────────
 function buildCampPickers() {
   const years = [...new Set(camp.allData.map(c => c.year).filter(Boolean))].sort();
-
-  // Year dropdown
   const sel = document.getElementById('campYearSelect');
   if (sel) {
     sel.innerHTML = '<option value="">All Years</option>';
@@ -869,7 +867,6 @@ function buildCampPickers() {
       sel.appendChild(opt);
     });
   }
-
   buildMonthGrid();
 }
 
@@ -998,14 +995,28 @@ function renderCampaigns() {
     return period ? `${name} (${period})` : name;
   });
 
+  // During: green if higher than before, red if lower, grey if equal/no data
+  const duringBg = data.map(c => {
+    if (c.unitsBefore===null||c.unitsDuring===null) return 'rgba(100,116,139,.55)';
+    if (c.unitsDuring > c.unitsBefore) return 'rgba(34,197,94,.78)';
+    if (c.unitsDuring < c.unitsBefore) return 'rgba(239,68,68,.78)';
+    return 'rgba(100,116,139,.55)';
+  });
+  const duringBorder = data.map(c => {
+    if (c.unitsBefore===null||c.unitsDuring===null) return '#64748b';
+    if (c.unitsDuring > c.unitsBefore) return '#22c55e';
+    if (c.unitsDuring < c.unitsBefore) return '#ef4444';
+    return '#64748b';
+  });
+
   camp.chart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
       datasets: [
-        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.55)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
-        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:'rgba(99,102,241,.75)',  borderColor:'#6366f1', borderWidth:1, borderRadius:3 },
-        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(34,197,94,.6)',   borderColor:'#22c55e', borderWidth:1, borderRadius:3 },
+        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.45)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
+        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:duringBg, borderColor:duringBorder, borderWidth:1, borderRadius:3 },
+        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(100,116,139,.30)', borderColor:'#475569', borderWidth:1, borderRadius:3 },
       ],
     },
     options: {

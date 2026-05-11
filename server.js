@@ -243,9 +243,8 @@ function parseCampaignData(rows) {
     if (colA === 'Type' || colB === 'Campaign') return;
 
     // Check for month divider: A is empty, and non-empty cells form ONLY "Month [Year]"
+    // Strict check prevents date-range strings like "09 Feb - 10 May 2026" from false-matching
     if (!colA) {
-      // Strict check: non-empty cells must contain ONLY a month name + optional year
-      // This prevents date-range strings like "09 Feb - 10 May 2026" from false-matching
       const nonEmpty = row.map(c => cleanStr(c)).filter(Boolean).join(' ').trim();
       const monthHeaderMatch = nonEmpty.match(
         new RegExp('^(' + MONTH_NAMES_LIST.join('|') + ')\\s*(\\d{4})?$', 'i')

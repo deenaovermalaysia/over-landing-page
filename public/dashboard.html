@@ -31,10 +31,6 @@
     .type-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700;}
     .type-campaign{background:rgba(99,102,241,.18);color:#a5b4fc;}
     .type-launch  {background:rgba(168,85,247,.18);color:#c084fc;}
-    .camp-year-picker{display:flex;flex-wrap:wrap;gap:5px;}
-    .camp-year-btn{padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s;}
-    .camp-year-btn:hover{border-color:var(--accent2);color:var(--text);}
-    .camp-year-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
     .camp-month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;}
     .camp-month-cell{padding:6px 2px;text-align:center;border-radius:6px;font-size:.68rem;font-weight:600;cursor:pointer;border:1px solid transparent;transition:all .15s;}
     .camp-month-cell.has-data{background:var(--surface2);color:var(--text);border-color:var(--border);}
@@ -119,10 +115,10 @@
     <div class="sb-section">
       <p class="sb-label">Performance Key</p>
       <div class="roas-legend">
-        <div class="leg-item"><span class="leg-dot" style="background:#22c55e"></span>Lift &gt; 20%</div>
-        <div class="leg-item"><span class="leg-dot" style="background:#86efac"></span>Positive lift</div>
-        <div class="leg-item"><span class="leg-dot" style="background:#f87171"></span>Negative / flat</div>
-        <div class="leg-item"><span class="leg-dot dot-poor"></span>No data</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#22c55e"></span>During &gt; Before</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#ef4444"></span>During &lt; Before</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#64748b"></span>Before / After</div>
+        <div class="leg-item"><span class="leg-dot dot-poor"></span>No unit data</div>
       </div>
     </div>
   </aside>
