@@ -91,7 +91,9 @@
   <aside class="sidebar">
     <div class="sb-section">
       <p class="sb-label">Year</p>
-      <div id="campYearPicker" class="camp-year-picker"></div>
+      <select id="campYearSelect" class="select-input" onchange="setCampYear(this.value)">
+        <option value="">All Years</option>
+      </select>
     </div>
     <div class="sb-section">
       <p class="sb-label">Month</p>

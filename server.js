@@ -242,16 +242,20 @@ function parseCampaignData(rows) {
     // Skip header rows
     if (colA === 'Type' || colB === 'Campaign') return;
 
-    // Check for month divider: A is empty, and any col has a month name
+    // Check for month divider: A is empty, and non-empty cells form ONLY "Month [Year]"
     if (!colA) {
-      // Look for month name anywhere in the row
-      const rowText = row.map(c => cleanStr(c)).join(' ').toUpperCase();
-      const foundMonth = MONTH_NAMES_LIST.find(m => rowText.includes(m.toUpperCase()));
+      // Strict check: non-empty cells must contain ONLY a month name + optional year
+      // This prevents date-range strings like "09 Feb - 10 May 2026" from false-matching
+      const nonEmpty = row.map(c => cleanStr(c)).filter(Boolean).join(' ').trim();
+      const monthHeaderMatch = nonEmpty.match(
+        new RegExp('^(' + MONTH_NAMES_LIST.join('|') + ')\\s*(\\d{4})?$', 'i')
+      );
+      const foundMonth = monthHeaderMatch ? monthHeaderMatch[1] : null;
 
       if (foundMonth) {
         // It's a month divider row — save any pending and update month
         if (pendingCampaign) { campaigns.push(pendingCampaign); pendingCampaign = null; }
-        currentMonth = foundMonth;
+        currentMonth = foundMonth.charAt(0).toUpperCase() + foundMonth.slice(1).toLowerCase();
         return;
       }
 

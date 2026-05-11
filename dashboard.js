@@ -858,17 +858,17 @@ async function loadCampaigns() {
 function buildCampPickers() {
   const years = [...new Set(camp.allData.map(c => c.year).filter(Boolean))].sort();
 
-  // Year pills
-  const yearDiv = document.getElementById('campYearPicker');
-  yearDiv.innerHTML = '';
-
-  ['', ...years].forEach(y => {
-    const btn = document.createElement('button');
-    btn.className = 'camp-year-btn' + (camp.filterYear === y ? ' active' : '');
-    btn.textContent = y || 'All';
-    btn.onclick = () => setCampYear(y);
-    yearDiv.appendChild(btn);
-  });
+  // Year dropdown
+  const sel = document.getElementById('campYearSelect');
+  if (sel) {
+    sel.innerHTML = '<option value="">All Years</option>';
+    years.forEach(y => {
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if (y === camp.filterYear) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
 
   buildMonthGrid();
 }
