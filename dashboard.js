@@ -1225,26 +1225,61 @@ function renderLiveHost() {
 // ═══════════════════════════════════════════════════════════════
 // TIKTOK
 // ═══════════════════════════════════════════════════════════════
-const tt = { data:null, chart:null, loaded:false, currentTab:null };
+const MONTH_NAMES_TT  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_SHORT_TT  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-async function loadTikTok(tab) {
-  const url = '/api/tiktok' + (tab ? '?tab='+encodeURIComponent(tab) : '');
+const tt = {
+  data:        null,
+  chart:       null,
+  loaded:      false,
+  currentTab:  null,
+  availMonths: [],   // [{ tab, month, year }]
+  filterYear:  '',
+  filterMonth: '',
+};
+
+// ── Init: fetch available tabs, default to current month ──────
+async function loadTikTok(tabOverride) {
   document.getElementById('ttLoading').style.display = 'flex';
   document.getElementById('ttError').style.display   = 'none';
   document.getElementById('ttContent').style.display = 'none';
   try {
-    const res  = await fetch(url, { credentials:'same-origin' });
-    if (res.status===401) { window.location.href='/login.html'; return; }
+    // Step 1: Get available tabs (only if not cached)
+    if (!tt.availMonths.length) {
+      const tabRes = await fetch('/api/tiktok/tabs', { credentials:'same-origin' });
+      if (tabRes.status === 401) { window.location.href='/login.html'; return; }
+      const tabJson = await tabRes.json();
+      if (!tabRes.ok || !tabJson.success) throw new Error(tabJson.detail || tabJson.error);
+      tt.availMonths = tabJson.availMonths;
+      buildTtPickers();
+    }
+
+    // Step 2: Determine which tab to load
+    let useTab = tabOverride;
+    if (!useTab) {
+      const now = new Date();
+      const curMonth = MONTH_NAMES_TT[now.getMonth()];
+      const curYear  = String(now.getFullYear());
+      const match = tt.availMonths.find(m => m.month === curMonth && m.year === curYear);
+      useTab = match ? match.tab : (tt.availMonths[0]?.tab || null);
+    }
+    if (!useTab) throw new Error('No data tabs found in TikTok sheet.');
+
+    // Step 3: Fetch data for selected tab
+    const res  = await fetch('/api/tiktok?tab=' + encodeURIComponent(useTab), { credentials:'same-origin' });
+    if (res.status === 401) { window.location.href='/login.html'; return; }
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.detail || json.error);
-    tt.data = json; tt.currentTab = json.tab;
-    // Populate dropdown
-    const sel = document.getElementById('ttMonthSelect');
-    if (json.availTabs && json.availTabs.length) {
-      sel.innerHTML = json.availTabs.map(t=>
-        `<option value="${t}" ${t===json.tab?'selected':''}>${t}</option>`
-      ).join('');
+
+    // Update filter state
+    const loaded = tt.availMonths.find(m => m.tab === useTab);
+    if (loaded) {
+      tt.filterYear  = loaded.year;
+      tt.filterMonth = loaded.month;
+      buildTtPickers();
     }
+
+    tt.data = json; tt.currentTab = useTab; tt.loaded = true;
     document.getElementById('ttLoading').style.display = 'none';
     document.getElementById('ttContent').style.display = 'block';
     renderTikTok();
@@ -1254,6 +1289,66 @@ async function loadTikTok(tab) {
     document.getElementById('ttError').style.display   = 'flex';
     document.getElementById('ttErrorMsg').textContent  = err.message;
   }
+}
+
+// ── Build year select + month grid ────────────────────────────
+function buildTtPickers() {
+  const years = [...new Set(tt.availMonths.map(m => m.year))].sort().reverse();
+
+  const sel = document.getElementById('ttYearSelect');
+  if (sel) {
+    sel.innerHTML = '<option value="">All Years</option>';
+    years.forEach(y => {
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      if (y === tt.filterYear) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  buildTtMonthGrid();
+}
+
+function buildTtMonthGrid() {
+  const relevant = tt.filterYear
+    ? tt.availMonths.filter(m => m.year === tt.filterYear)
+    : tt.availMonths;
+  const monthsWithData = new Set(relevant.map(m => m.month));
+
+  const grid = document.getElementById('ttMonthGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  MONTH_SHORT_TT.forEach((short, i) => {
+    const full     = MONTH_NAMES_TT[i];
+    const hasData  = monthsWithData.has(full);
+    const selected = tt.filterMonth === full;
+
+    const cell = document.createElement('div');
+    cell.className = 'camp-month-cell ' + (selected ? 'selected' : hasData ? 'has-data' : 'no-data');
+    cell.textContent = short;
+    cell.title = hasData
+      ? (selected ? `Viewing ${full}` : `View ${full}`)
+      : `No data for ${full}${tt.filterYear ? ' '+tt.filterYear : ''}`;
+
+    if (hasData) {
+      cell.onclick = () => {
+        const match = tt.availMonths.find(m =>
+          m.month === full && (!tt.filterYear || m.year === tt.filterYear)
+        );
+        if (match) loadTikTok(match.tab);
+      };
+    }
+    grid.appendChild(cell);
+  });
+}
+
+function setTtYear(year) {
+  tt.filterYear  = year;
+  tt.filterMonth = '';
+  buildTtPickers();
+  const first = tt.availMonths.find(m => !year || m.year === year);
+  if (first) loadTikTok(first.tab);
 }
 
 function renderTikTok() {

@@ -433,57 +433,94 @@ app.get('/api/live-host', requireAuth, async (req, res) => {
 // ─── TikTok parsers ───────────────────────────────────────────
 function parseTikTokData(rows) {
   let totalRevenue = 0, totalProfit = 0;
+  // Row 1 (index 0): total revenue across cols A–H (cells starting with RM)
+  // Row 2 (index 1): total profit across cols A–H
   [[rows[0], 'rev'], [rows[1], 'prof']].forEach(([row, key]) => {
     (row || []).forEach(cell => {
-      const s = String(cell || '');
+      const s = String(cell || '').trim();
       if (s.startsWith('RM')) {
         const v = extCleanNum(s);
-        if (v > 0) { if (key==='rev' && !totalRevenue) totalRevenue = v; if (key==='prof' && !totalProfit) totalProfit = v; }
+        if (v > 0) {
+          if (key === 'rev' && !totalRevenue) totalRevenue = v;
+          if (key === 'prof' && !totalProfit) totalProfit  = v;
+        }
       }
     });
   });
+  // Row 4+ (index 3+): daily data — date in col A, matching Singapore layout
   const daily = [];
   for (let i = 3; i < rows.length; i++) {
     const row = rows[i] || [];
     const ds = String(row[0] || '').trim();
     if (!ds || !/\d{1,2}\/\d{2}\/\d{4}/.test(ds)) continue;
-    daily.push({ date:ds, sales:extCleanNum(row[1]), adsCost:extCleanNum(row[2]),
-      cogs:extCleanNum(row[3]), platFees:extCleanNum(row[4]),
-      hostCost:extCleanNum(row[5]), kolFees:extCleanNum(row[6]),
-      profit:extCleanNum(row[7]), roas:extCleanNum(row[8]) });
+    daily.push({
+      date:     ds,
+      sales:    extCleanNum(row[1]),
+      adsCost:  extCleanNum(row[2]),
+      cogs:     extCleanNum(row[3]),
+      platFees: extCleanNum(row[4]),
+      hostCost: extCleanNum(row[5]),
+      kolFees:  extCleanNum(row[6]),
+      profit:   extCleanNum(row[7]),
+      roas:     extCleanNum(row[8]),
+    });
   }
   return { totalRevenue, totalProfit, daily };
 }
+
+// ─── TikTok: list available month tabs ───────────────────────
+app.get('/api/tiktok/tabs', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const meta   = await sheets.spreadsheets.get({ spreadsheetId: TIKTOK_ID });
+    const allTabNames = meta.data.sheets.map(s => s.properties.title);
+
+    // Match full month names: "January 2026", "February 2026", etc.
+    const MONTH_PATTERN = /^([A-Za-z]+)\s+(\d{4})$/;
+    const FULL_MONTHS   = ['January','February','March','April','May','June',
+                           'July','August','September','October','November','December'];
+    const availMonths   = [];
+    allTabNames.forEach(t => {
+      const m = t.match(MONTH_PATTERN);
+      if (!m) return;
+      const rawMonth = m[1], year = m[2];
+      // Case-insensitive match to a full month name
+      const full = FULL_MONTHS.find(fm => fm.toLowerCase() === rawMonth.toLowerCase());
+      if (!full) return;
+      availMonths.push({ tab: t, month: full, year });
+    });
+    // Sort newest first
+    availMonths.sort((a, b) => {
+      const byYear = parseInt(b.year) - parseInt(a.year);
+      if (byYear !== 0) return byYear;
+      return FULL_MONTHS.indexOf(b.month) - FULL_MONTHS.indexOf(a.month);
+    });
+
+    res.json({ success: true, availMonths });
+  } catch(err) {
+    console.error('[TikTok Tabs]', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
 
 app.get('/api/tiktok', requireAuth, async (req, res) => {
   try {
     const auth   = getGoogleAuth();
     const sheets = google.sheets({ version: 'v4', auth });
     const { tab } = req.query;
-
-    // Generate last 12 months as uppercase tab names e.g. "MAY 2026"
-    const MONTHS_UC = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
-                       'JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
-    const now = new Date();
-    const availTabs = [];
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      availTabs.push(`${MONTHS_UC[d.getMonth()]} ${d.getFullYear()}`);
-    }
-
-    const useTab = tab || availTabs[0];
-    if (!useTab) return res.status(400).json({ error:'No tab' });
+    if (!tab) return res.status(400).json({ error: 'tab required' });
 
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId: TIKTOK_ID,
-      range: `'${useTab}'!A1:J35`,
+      range: `'${tab}'!A1:J35`,
       valueRenderOption: 'FORMATTED_VALUE',
     });
     const data = parseTikTokData(resp.data.values || []);
-    res.json({ success:true, tab:useTab, availTabs, ...data });
+    res.json({ success: true, tab, ...data });
   } catch(err) {
     console.error('[TikTok]', err.message);
-    res.status(500).json({ error:'Failed', detail: err.message });
+    res.status(500).json({ error: 'Failed', detail: err.message });
   }
 });
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>ROAS Dashboard</title>
+  <title>OVER Performance Hub</title>
   <link rel="stylesheet" href="/css/style.css"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
@@ -54,7 +54,7 @@
       <path d="M10 28 L20 12 L30 28" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M14 22 L26 22" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
     </svg>
-    <span class="topbar-title">Ads Dashboard</span>
+    <span class="topbar-title">OVER Performance Hub</span>
   </div>
   <div class="topbar-right">
     <div class="topbar-updated">
@@ -238,14 +238,18 @@
 <div class="page-view" id="page-tiktok">
   <aside class="sidebar">
     <div class="sb-section">
-      <p class="sb-label">Month</p>
-      <select id="ttMonthSelect" class="select-input" onchange="loadTikTok(this.value)">
-        <option value="">Loading...</option>
+      <p class="sb-label">Year</p>
+      <select id="ttYearSelect" class="select-input" onchange="setTtYear(this.value)">
+        <option value="">All Years</option>
       </select>
     </div>
     <div class="sb-section">
+      <p class="sb-label">Month</p>
+      <div id="ttMonthGrid" class="camp-month-grid"></div>
+    </div>
+    <div class="sb-section">
       <p class="sb-label">Info</p>
-      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">Data pulled from TikTok Mastersheet monthly tabs. Profit excludes operations cost.</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">Data pulled from TikTok Mastersheet (2026). Profit excludes operations cost.</p>
     </div>
   </aside>
   <main class="main-content">
