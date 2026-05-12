@@ -627,4 +627,219 @@ app.get('/api/singapore', requireAuth, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// DAILY ROAS — Ads Masterlist (SPREADSHEET_ID)
+// ═══════════════════════════════════════════════════════════════
+const DAILY_LOC_MAP = {
+  '1. Group':     'group',
+  '2. FB':        'fb',
+  '3. Google':    'google',
+  '4. FB+Google': 'fbgoogle',
+  '5. TikTok':    'tiktok',
+  '6. Shopee':    'shopee',
+  '7. Lazada':    'lazada',
+};
+
+// Parse flat Daily tab rows → array of { date, month, group, fb, google, fbgoogle, tiktok, shopee, lazada }
+function parseDailyRows(rows) {
+  const cleanN = s => {
+    const str = String(s || '').trim();
+    const neg = str.startsWith('-');
+    const n   = parseFloat(str.replace(/[^0-9.]/g, ''));
+    return isNaN(n) ? 0 : (neg ? -n : n);
+  };
+
+  const byDate = {}, order = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row  = rows[i] || [];
+    if (row.length < 5) continue;
+    const date  = String(row[0] || '').trim();
+    const month = String(row[1] || '').trim();
+    const loc   = String(row[2] || '').trim();
+    const desc  = String(row[3] || '').trim();
+    const raw   = String(row[4] || '').trim();
+
+    if (!/^\d{1,2}\/\d{2}\/\d{4}$/.test(date)) continue;
+    const key = DAILY_LOC_MAP[loc];
+    if (!key) continue;
+
+    if (!byDate[date]) { byDate[date] = { date, month }; order.push(date); }
+    if (!byDate[date][key]) byDate[date][key] = { income: 0, mkpCost: 0, mkpAds: 0, roas: 0 };
+
+    const v = cleanN(raw);
+    if      (desc === 'Income')            byDate[date][key].income  = v;
+    else if (desc === 'Marketplace Cost')  byDate[date][key].mkpCost = Math.abs(v);
+    else if (desc === 'Marketplace Ads')   byDate[date][key].mkpAds  = Math.abs(v);
+    else if (desc === 'ROAS')              byDate[date][key].roas    = v;
+  }
+
+  return order.map(d => byDate[d]);
+}
+
+// Parse a monthly tab (Jan, Feb…) for KPIs — scans rows by text label
+function parseMonthlySummary(rows) {
+  const cleanRM  = s => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isNaN(n)?0:n; };
+  const cleanPct = s => {
+    const str = String(s||'').trim();
+    if (!str) return null;
+    const neg = str.startsWith('-');
+    const n   = parseFloat(str.replace(/[^0-9.]/g,''));
+    return isNaN(n) ? null : (neg ? -n : n);
+  };
+  const isRM  = s => /RM[\d,.]/.test(String(s));
+  const isPct = s => /^-?\d+\.?\d*%$/.test(String(s).trim());
+  const isInt = s => /^\d+$/.test(String(s).trim());
+
+  const r = {
+    targetRate:null, daysLeft:null, trRevPerDay:null, behind:null,
+    variables:{ cogs:null, ads:null, platformFees:null, txnFees:null },
+    totalCost:null,
+    dailyUpdate:{ date:null, roas:null, behind:null, targetRate:null },
+    adsRunRate:{ givenBudget:null, totalSpent:null, runRatePerDay:null,
+                 budgetRemaining:null, runRateProjection:null, adsRunRate:null },
+    tuesdayUpdate:{ dateRange:null, avgSales:null, avgRoas:null },
+  };
+
+  rows.forEach(row => {
+    const cells = row.map(c => String(c||'').trim());
+    const text  = cells.join(' ').toLowerCase();
+    if (!text.replace(/\s/g,'')) return;
+
+    const rmC  = cells.filter(isRM);
+    const pctC = cells.filter(isPct);
+    const intC = cells.filter(isInt);
+
+    // Target Rate + Days Left
+    if (text.includes('target rate') && text.includes('days left')) {
+      if (pctC.length && r.targetRate === null) r.targetRate = cleanPct(pctC[0]);
+      const dl = intC.find(c => +c >= 0 && +c <= 31);
+      if (dl && r.daysLeft === null) r.daysLeft = +dl;
+    }
+
+    // TR Revenue Per Day (+ BEHIND often on same row)
+    if (text.includes('revenue per day')) {
+      if (rmC.length  && r.trRevPerDay === null) r.trRevPerDay = cleanRM(rmC[0]);
+      if (pctC.length && r.behind      === null) r.behind      = cleanPct(pctC[0]);
+    }
+    // BEHIND standalone (daily update section)
+    if (text.includes('behind') && !text.includes('revenue per day') && pctC.length && r.behind === null) {
+      r.behind = cleanPct(pctC[0]);
+    }
+
+    // Variable costs (exclude ads run rate section rows)
+    if (text.includes('cogs') && pctC.length)
+      r.variables.cogs = cleanPct(pctC[0]);
+    if (text.includes('ads') && !text.includes('run rate') && !text.includes('given') &&
+        !text.includes('spent') && !text.includes('budget') && !text.includes('projection') &&
+        pctC.length && r.variables.ads === null)
+      r.variables.ads = cleanPct(pctC[0]);
+    if (text.includes('platform fees') && pctC.length)
+      r.variables.platformFees = cleanPct(pctC[0]);
+    if (text.includes('transaction fees') && pctC.length)
+      r.variables.txnFees = cleanPct(pctC[0]);
+    if (text.includes('total cost') && rmC.length)
+      r.totalCost = cleanRM(rmC[0]);
+
+    // Daily Update — date, ROAS, BEHIND:, TARGET RATE: labels
+    if (cells.some(c => /\d{2}\/\d{2}\/\d{4}/.test(c)) && !r.dailyUpdate.date)
+      r.dailyUpdate.date = cells.find(c => /\d{2}\/\d{2}\/\d{4}/.test(c));
+    if ((text.startsWith('roas:') || text.match(/^\s*roas:\s+\d/)) && !r.dailyUpdate.roas) {
+      const n = cells.find(c => /^\d+\.?\d*$/.test(c));
+      if (n) r.dailyUpdate.roas = +n;
+    }
+    if ((text.startsWith('behind:') || text.match(/^\s*behind:/)) && pctC.length && !r.dailyUpdate.behind)
+      r.dailyUpdate.behind = cleanPct(pctC[0]);
+    if ((text.startsWith('target rate:') || text.match(/^\s*target rate:/)) && pctC.length && !r.dailyUpdate.targetRate)
+      r.dailyUpdate.targetRate = cleanPct(pctC[0]);
+
+    // Ads Run Rate section
+    if (text.includes('given budget')       && rmC.length) r.adsRunRate.givenBudget       = cleanRM(rmC[0]);
+    if (text.includes('total spent')        && rmC.length) r.adsRunRate.totalSpent         = cleanRM(rmC[0]);
+    if (text.includes('run rate (per day)') && rmC.length) r.adsRunRate.runRatePerDay      = cleanRM(rmC[0]);
+    if (text.includes('budget remaining')   && rmC.length) r.adsRunRate.budgetRemaining    = cleanRM(rmC[0]);
+    if (text.includes('run rate projection')&& rmC.length) r.adsRunRate.runRateProjection  = cleanRM(rmC[0]);
+    if (text.includes('ads run rate:')      && pctC.length)r.adsRunRate.adsRunRate         = cleanPct(pctC[0]);
+
+    // Tuesday Morning Update
+    if (text.includes('date range') && !r.tuesdayUpdate.dateRange) {
+      const idx = cells.findIndex(c => c.toLowerCase().includes('date range'));
+      const val = cells.slice(idx+1).find(c => c && c.length > 2 && !c.toLowerCase().includes('date'));
+      if (val) r.tuesdayUpdate.dateRange = val;
+    }
+    if (text.includes('average sales') && rmC.length)  r.tuesdayUpdate.avgSales = cleanRM(rmC[0]);
+    if (text.includes('average roas')) {
+      const n = cells.find(c => /^\d+\.?\d*$/.test(c));
+      if (n) r.tuesdayUpdate.avgRoas = +n;
+    }
+  });
+
+  return r;
+}
+
+// ─── List short month tabs (Jan, Feb…) in SPREADSHEET_ID ─────
+const DAILY_MONTH_TABS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+app.get('/api/daily/tabs', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const meta   = await sheets.spreadsheets.get({ spreadsheetId: process.env.SPREADSHEET_ID });
+    const names  = meta.data.sheets.map(s => s.properties.title);
+    const avail  = DAILY_MONTH_TABS.filter(m => names.includes(m));
+    res.json({ success: true, availMonths: avail });
+  } catch(err) {
+    console.error('[Daily Tabs]', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
+
+// ─── Daily data filtered by month ────────────────────────────
+app.get('/api/daily', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const { month } = req.query; // e.g. "May"
+
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: "'Daily'!A:E",
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+
+    let daily = parseDailyRows(resp.data.values || []);
+
+    // month col in sheet is "Jan-26", "May-26" etc. — match by prefix
+    if (month) {
+      daily = daily.filter(d => String(d.month||'').toLowerCase().startsWith(month.toLowerCase()));
+    }
+
+    res.json({ success: true, daily });
+  } catch(err) {
+    console.error('[Daily]', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
+
+// ─── Monthly summary KPIs from month tab ─────────────────────
+app.get('/api/monthly-summary', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const { tab } = req.query;
+    if (!tab) return res.status(400).json({ error: 'tab required' });
+
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `'${tab}'!A1:N50`,
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+    const data = parseMonthlySummary(resp.data.values || []);
+    res.json({ success: true, tab, ...data });
+  } catch(err) {
+    console.error('[Monthly Summary]', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));

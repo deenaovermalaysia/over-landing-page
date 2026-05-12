@@ -409,13 +409,24 @@ function getFullMonthSlice(md) {
 // INIT
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('.platform-btn').forEach(btn => {
+  // Product Daily ROAS platform buttons (scoped to product page only)
+  document.querySelectorAll('#page-product .platform-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#page-product .platform-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.currentTab = btn.dataset.tab;
       state.hiddenProducts.clear();
       loadData();
+    });
+  });
+
+  // Daily ROAS channel buttons
+  document.querySelectorAll('.daily-loc-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.daily-loc-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      dr.currentLoc = btn.dataset.loc;
+      if (dr.daily.length) renderDailyRoas();
     });
   });
 
@@ -1601,6 +1612,279 @@ function renderSingapore(data) {
       scales:{
         x:{ ticks:{ color:'#64748b', font:{size:10}, maxRotation:45 }, grid:{ color:'#1e293b' } },
         y:{ beginAtZero:true, ticks:{ color:'#64748b', callback: v=>'$'+v.toLocaleString() }, grid:{ color:'#273549' } },
+      },
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DAILY ROAS
+// ═══════════════════════════════════════════════════════════════
+const dr = {
+  daily:        [],
+  summary:      null,
+  availMonths:  [],
+  currentMonth: null,
+  currentLoc:   'group',
+  revChart:     null,
+  roasChart:    null,
+};
+
+async function loadDailyRoas(monthOverride) {
+  document.getElementById('drLoading').style.display = 'flex';
+  document.getElementById('drError').style.display   = 'none';
+  document.getElementById('drContent').style.display = 'none';
+  try {
+    // Step 1: Get available month tabs (cached)
+    if (!dr.availMonths.length) {
+      const tabRes  = await fetch('/api/daily/tabs', { credentials:'same-origin' });
+      if (tabRes.status === 401) { window.location.href='/login.html'; return; }
+      const tabJson = await tabRes.json();
+      if (!tabRes.ok || !tabJson.success) throw new Error(tabJson.detail || tabJson.error);
+      dr.availMonths = tabJson.availMonths;
+      buildDrMonthSelect();
+    }
+
+    // Step 2: Determine month (default = last available)
+    const useMonth = monthOverride || dr.currentMonth || dr.availMonths[dr.availMonths.length - 1];
+    if (!useMonth) throw new Error('No monthly data found in sheet.');
+    dr.currentMonth = useMonth;
+    const sel = document.getElementById('drMonthSelect');
+    if (sel) sel.value = useMonth;
+
+    // Step 3: Fetch daily data + monthly summary in parallel
+    const [dailyRes, summRes] = await Promise.all([
+      fetch(`/api/daily?month=${encodeURIComponent(useMonth)}`, { credentials:'same-origin' }),
+      fetch(`/api/monthly-summary?tab=${encodeURIComponent(useMonth)}`, { credentials:'same-origin' }),
+    ]);
+    if (dailyRes.status === 401) { window.location.href='/login.html'; return; }
+
+    const dailyJson = await dailyRes.json();
+    if (!dailyRes.ok || !dailyJson.success) throw new Error(dailyJson.detail || dailyJson.error);
+
+    dr.daily   = dailyJson.daily || [];
+    dr.summary = null;
+    if (summRes.ok) {
+      try { const sj = await summRes.json(); if (sj.success) dr.summary = sj; } catch(e) {}
+    }
+
+    document.getElementById('drLoading').style.display = 'none';
+    document.getElementById('drContent').style.display = 'block';
+    renderDailyRoas();
+  } catch(err) {
+    console.error('[Daily]', err);
+    document.getElementById('drLoading').style.display = 'none';
+    document.getElementById('drError').style.display   = 'flex';
+    document.getElementById('drErrorMsg').textContent  = err.message;
+  }
+}
+
+function buildDrMonthSelect() {
+  const sel = document.getElementById('drMonthSelect');
+  if (!sel) return;
+  sel.innerHTML = '';
+  dr.availMonths.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    if (m === dr.currentMonth) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function renderDailyRoas() {
+  const loc    = dr.currentLoc;
+  const fmtRM  = v => 'RM ' + (v||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = (v, signed=true) => v === null ? '—' : (signed && v > 0 ? '+' : '') + v.toFixed(2) + '%';
+  const chanLabel = { group:'All',fbgoogle:'Web (FB+Google)',fb:'Facebook',google:'Google',tiktok:'TikTok',shopee:'Shopee',lazada:'Lazada' };
+
+  // Days with any data for current location
+  const activeDays = dr.daily.filter(d => d[loc] && (d[loc].income > 0 || d[loc].roas > 0));
+
+  // ── Stat cards ─────────────────────────────────────────────
+  const totalRev = activeDays.reduce((s,d) => s + (d[loc]?.income||0), 0);
+  const roasDays = activeDays.filter(d => (d[loc]?.roas||0) > 0);
+  const avgRoas  = roasDays.length ? roasDays.reduce((s,d) => s + d[loc].roas, 0) / roasDays.length : 0;
+
+  document.getElementById('drStatRev').textContent    = fmtRM(totalRev);
+  document.getElementById('drStatRevSub').textContent = `${activeDays.length} active days · ${dr.currentMonth}`;
+  document.getElementById('drStatRoas').textContent   = avgRoas > 0 ? avgRoas.toFixed(2)+'x' : '—';
+  document.getElementById('drStatRoasSub').textContent= `${roasDays.length} days with data`;
+
+  const s = dr.summary;
+  if (s) {
+    document.getElementById('drStatTarget').textContent = s.targetRate !== null ? s.targetRate.toFixed(1)+'%' : '—';
+
+    const behind     = s.behind !== null ? s.behind : (s.dailyUpdate?.behind ?? null);
+    const behindEl   = document.getElementById('drStatBehind');
+    const behindCard = document.getElementById('drBehindCard');
+    if (behind !== null) {
+      behindEl.textContent  = fmtPct(behind);
+      behindEl.style.color  = behind < 0 ? '#f87171' : '#4ade80';
+      behindCard.className  = 'stat-card ' + (behind < 0 ? 'stat-card--red' : 'stat-card--green');
+    } else { behindEl.textContent = '—'; }
+
+    document.getElementById('drStatBehindSub').textContent = s.dailyUpdate?.date ? 'as of ' + s.dailyUpdate.date : '';
+    document.getElementById('drStatDays').textContent      = s.daysLeft !== null ? s.daysLeft : '—';
+
+    // ── Variable Costs ──────────────────────────────────────
+    const costLabel = s.dailyUpdate?.date ? 'as of ' + s.dailyUpdate.date : dr.currentMonth;
+    document.getElementById('drCostBadge').textContent = costLabel;
+    document.getElementById('drVarBody').innerHTML = [
+      ['COGS',             s.variables.cogs],
+      ['Ads',              s.variables.ads],
+      ['Platform Fees',    s.variables.platformFees],
+      ['Transaction Fees', s.variables.txnFees],
+    ].map(([lbl,val]) => `
+      <tr>
+        <td style="color:var(--muted)">${lbl}</td>
+        <td style="text-align:right;font-weight:600">${val !== null ? val.toFixed(2)+'%' : '—'}</td>
+      </tr>`).join('');
+    document.getElementById('drTotalCost').textContent = s.totalCost ? fmtRM(s.totalCost) : '—';
+
+    // ── Ads Run Rate ────────────────────────────────────────
+    const arr     = s.adsRunRate;
+    const arrRate = arr.adsRunRate;
+    document.getElementById('drAdsRateBadge').textContent = arrRate !== null ? arrRate.toFixed(1)+'%' : '—';
+    document.getElementById('drAdsRunBody').innerHTML = [
+      ['Given Budget',      arr.givenBudget       !== null ? fmtRM(arr.givenBudget)       : '—', ''],
+      ['Total Spent',       arr.totalSpent         !== null ? fmtRM(arr.totalSpent)        : '—', ''],
+      ['Run Rate / Day',    arr.runRatePerDay      !== null ? fmtRM(arr.runRatePerDay)     : '—', ''],
+      ['Budget Remaining',  arr.budgetRemaining    !== null ? fmtRM(arr.budgetRemaining)   : '—', ''],
+      ['Run Rate Proj.',    arr.runRateProjection  !== null ? fmtRM(arr.runRateProjection) : '—', ''],
+      ['ADS RUN RATE',      arrRate !== null ? arrRate.toFixed(1)+'%' : '—',
+                            arrRate !== null ? (arrRate > 100 ? '#f87171' : '#4ade80') : ''],
+    ].map(([lbl,val,col]) => `
+      <tr>
+        <td style="color:var(--muted)">${lbl}</td>
+        <td style="text-align:right;font-weight:600${col?';color:'+col:''}">${val}</td>
+      </tr>`).join('');
+
+    // ── Tuesday Morning Update ──────────────────────────────
+    const tu = s.tuesdayUpdate;
+    document.getElementById('drTuesdayRange').textContent = tu.dateRange || '—';
+    document.getElementById('drTuesdayBody').innerHTML = [
+      ['Avg Sales', tu.avgSales !== null ? fmtRM(tu.avgSales) : '—'],
+      ['Avg ROAS',  tu.avgRoas  !== null ? tu.avgRoas.toFixed(2)+'x' : '—'],
+    ].map(([lbl,val]) => `
+      <tr>
+        <td style="color:var(--muted)">${lbl}</td>
+        <td style="text-align:right;font-weight:700;color:#f1f5f9">${val}</td>
+      </tr>`).join('');
+
+  } else {
+    // Summary unavailable — show placeholders
+    ['drStatTarget','drStatBehind','drStatDays'].forEach(id => document.getElementById(id).textContent = '—');
+    document.getElementById('drCostBadge').textContent   = dr.currentMonth;
+    document.getElementById('drAdsRateBadge').textContent= '—';
+    document.getElementById('drTuesdayRange').textContent= '—';
+    ['drVarBody','drAdsRunBody','drTuesdayBody'].forEach(id => {
+      document.getElementById(id).innerHTML = '<tr><td colspan="2" style="color:var(--muted);text-align:center;padding:14px;font-size:.82rem">No summary data</td></tr>';
+    });
+    document.getElementById('drTotalCost').textContent = '—';
+  }
+
+  // ── Chart badges ────────────────────────────────────────────
+  const badge = `${dr.currentMonth} · ${chanLabel[loc]||loc}`;
+  document.getElementById('drRevBadge').textContent   = badge;
+  document.getElementById('drRoasBadge').textContent  = badge;
+  document.getElementById('drTableBadge').textContent = `${activeDays.length} days · ${badge}`;
+
+  // ── Render charts ───────────────────────────────────────────
+  renderDrRevChart(activeDays, loc);
+  renderDrRoasChart(activeDays, loc);
+
+  // ── Daily table ─────────────────────────────────────────────
+  const tbody = document.getElementById('drTableBody');
+  tbody.innerHTML = '';
+  if (!activeDays.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">No data for this selection</td></tr>';
+    return;
+  }
+  activeDays.forEach(d => {
+    const l = d[loc] || {};
+    const {label, cls} = roasRating(l.roas || 0);
+    const dp  = d.date.split('/');
+    const dLbl = dp.length >= 2 ? `${dp[0]}/${dp[1]}` : d.date;
+    const roasTd = l.roas > 0
+      ? `<span class="roas-badge ${cls}">${l.roas.toFixed(2)}x</span>`
+      : `<span class="roas-badge roas-not-perf">${label}</span>`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:600">${dLbl}</td>
+      <td style="text-align:right">${fmtRM(l.income  || 0)}</td>
+      <td style="text-align:right">${fmtRM(l.mkpAds  || 0)}</td>
+      <td style="text-align:right">${fmtRM(l.mkpCost || 0)}</td>
+      <td style="text-align:right">${roasTd}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderDrRevChart(days, loc) {
+  if (dr.revChart) dr.revChart.destroy();
+  if (!days.length) return;
+  const labels  = days.map(d => { const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
+  const revData = days.map(d => +(d[loc]?.income||0).toFixed(2));
+  const adsData = days.map(d => +(d[loc]?.mkpAds ||0).toFixed(2));
+
+  dr.revChart = new Chart(document.getElementById('drRevChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'Revenue',   data:revData, backgroundColor:'rgba(34,197,94,.65)',  borderColor:'#22c55e', borderWidth:1, borderRadius:4 },
+        { label:'Ads Spend', data:adsData, backgroundColor:'rgba(239,68,68,.55)',  borderColor:'#ef4444', borderWidth:1, borderRadius:4 },
+      ],
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#94a3b8', font:{size:11}, padding:16 } },
+        tooltip:{
+          backgroundColor:'#1e293b', borderColor:'#334155', borderWidth:1,
+          titleColor:'#f1f5f9', bodyColor:'#94a3b8',
+          callbacks:{ label: c => ` ${c.dataset.label}: RM${c.parsed.y.toLocaleString('en-MY',{minimumFractionDigits:2})}` },
+        },
+      },
+      scales:{
+        x:{ ticks:{color:'#64748b',font:{size:10},maxRotation:45}, grid:{color:'#1e293b'} },
+        y:{ beginAtZero:true, ticks:{color:'#64748b', callback: v=>'RM'+v.toLocaleString()}, grid:{color:'#273549'} },
+      },
+    },
+  });
+}
+
+function renderDrRoasChart(days, loc) {
+  if (dr.roasChart) dr.roasChart.destroy();
+  if (!days.length) return;
+  const labels   = days.map(d => { const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
+  const roasData = days.map(d => (d[loc]?.roas > 0) ? +d[loc].roas.toFixed(2) : null);
+  const n        = labels.length;
+
+  dr.roasChart = new Chart(document.getElementById('drRoasChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label:'ROAS', data:roasData, borderColor:'#6366f1', backgroundColor:'rgba(99,102,241,.12)', borderWidth:2.5, pointRadius:3, pointHoverRadius:6, tension:0.3, fill:true, spanGaps:false },
+        { label:'Good (3.0)',      data:Array(n).fill(3), borderColor:'rgba(34,197,94,.5)',  borderWidth:1, borderDash:[4,4], pointRadius:0, tension:0, backgroundColor:'transparent' },
+        { label:'Excellent (5.0)',data:Array(n).fill(5), borderColor:'rgba(168,85,247,.5)', borderWidth:1, borderDash:[4,4], pointRadius:0, tension:0, backgroundColor:'transparent' },
+      ],
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ position:'bottom', labels:{ color:'#94a3b8', font:{size:11}, padding:16 } },
+        tooltip:{
+          backgroundColor:'#1e293b', borderColor:'#334155', borderWidth:1,
+          titleColor:'#f1f5f9', bodyColor:'#94a3b8',
+          callbacks:{ label: c => ` ${c.dataset.label}: ${c.parsed.y !== null ? c.parsed.y.toFixed(2)+'x' : 'N/A'}` },
+        },
+      },
+      scales:{
+        x:{ ticks:{color:'#64748b',font:{size:10},maxRotation:45}, grid:{color:'#1e293b'} },
+        y:{ beginAtZero:true, min:0, ticks:{color:'#64748b', callback: v=>v.toFixed(1)+'x'}, grid:{color:'#273549'} },
       },
     },
   });

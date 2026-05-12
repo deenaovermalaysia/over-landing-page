@@ -43,6 +43,10 @@
     .camp-month-cell.no-data{color:#334155;cursor:default;opacity:.38;}
     .camp-month-cell.no-data:hover{background:transparent;}
     .roas-not-perf { background: rgba(100,116,139,0.15); color: #94a3b8; font-style: italic; }
+    .select-input{width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.84rem;outline:none;cursor:pointer;transition:border-color .2s;}
+    .select-input:focus{border-color:var(--accent2);}
+    .dr-kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;}
+    .dr-right-col{display:flex;flex-direction:column;gap:16px;}
   </style>
 </head>
 <body class="dashboard-body">
@@ -85,10 +89,151 @@
   <button class="page-tab" data-page="singapore" onclick="switchPage('singapore')">🇸🇬 Singapore</button>
 </nav>
 
-<div class="blank-page" id="page-daily">
-  <div style="font-size:2.5rem">📅</div>
-  <h2 style="font-size:1.1rem;font-weight:700;color:var(--text)">Daily ROAS</h2>
-  <p style="font-size:.85rem;max-width:360px">Coming soon — will show daily-level ROAS data from the Daily tab.</p>
+<div class="page-view" id="page-daily">
+  <aside class="sidebar">
+    <div class="sb-section">
+      <p class="sb-label">Month</p>
+      <select id="drMonthSelect" class="select-input" onchange="loadDailyRoas(this.value)">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="sb-section">
+      <p class="sb-label">Channel</p>
+      <div class="platform-tabs">
+        <button class="platform-btn daily-loc-btn active" data-loc="group">📊 All (Group)</button>
+        <button class="platform-btn daily-loc-btn" data-loc="fbgoogle">🌐 Web (FB+Google)</button>
+        <button class="platform-btn daily-loc-btn" data-loc="fb">📘 Facebook</button>
+        <button class="platform-btn daily-loc-btn" data-loc="google">🔍 Google</button>
+        <button class="platform-btn daily-loc-btn" data-loc="tiktok">🎵 TikTok</button>
+        <button class="platform-btn daily-loc-btn" data-loc="shopee">🛒 Shopee</button>
+        <button class="platform-btn daily-loc-btn" data-loc="lazada">📦 Lazada</button>
+      </div>
+    </div>
+    <div class="sb-section">
+      <p class="sb-label">Info</p>
+      <div style="font-size:.71rem;color:var(--muted);line-height:1.7;">
+        <div><strong style="color:var(--text)">All</strong> = Marketplaces + Web</div>
+        <div><strong style="color:var(--text)">Web</strong> = FB + Google only</div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">Revenue &amp; ROAS from Daily tab · KPIs from month tab</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div id="drLoading" class="state-overlay"><div class="spinner"></div><p>Loading daily data...</p></div>
+    <div id="drError" class="state-overlay" style="display:none;">
+      <p style="color:#ef4444">⚠ Failed to load</p>
+      <p id="drErrorMsg" style="color:#94a3b8;margin-top:4px;font-size:.85rem;"></p>
+      <button class="btn-retry" onclick="loadDailyRoas()">Retry</button>
+    </div>
+    <div id="drContent" style="display:none;">
+
+      <!-- ── Stat Cards (5 cols) ──────────────────────────────── -->
+      <div class="stat-cards" style="grid-template-columns:repeat(5,1fr);">
+        <div class="stat-card">
+          <p class="stat-label">Total Revenue</p>
+          <p class="stat-value" id="drStatRev">—</p>
+          <p class="stat-sub"   id="drStatRevSub"></p>
+        </div>
+        <div class="stat-card stat-card--green">
+          <p class="stat-label">Avg ROAS</p>
+          <p class="stat-value" id="drStatRoas">—</p>
+          <p class="stat-sub"   id="drStatRoasSub"></p>
+        </div>
+        <div class="stat-card stat-card--purple">
+          <p class="stat-label">Target Rate</p>
+          <p class="stat-value" id="drStatTarget">—</p>
+          <p class="stat-sub"   id="drStatTargetSub">monthly target</p>
+        </div>
+        <div class="stat-card" id="drBehindCard">
+          <p class="stat-label">Behind / Ahead</p>
+          <p class="stat-value" id="drStatBehind">—</p>
+          <p class="stat-sub"   id="drStatBehindSub"></p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">Days Left</p>
+          <p class="stat-value" id="drStatDays">—</p>
+          <p class="stat-sub">this month</p>
+        </div>
+      </div>
+
+      <!-- ── Monthly KPI Cards (2-col grid) ──────────────────── -->
+      <div class="dr-kpi-grid">
+
+        <!-- Variable Costs -->
+        <div class="card" style="margin-bottom:0">
+          <div class="card-header">
+            <h2 class="card-title">💰 Variable Costs</h2>
+            <span class="card-badge" id="drCostBadge">—</span>
+          </div>
+          <table class="perf-table">
+            <tbody id="drVarBody"></tbody>
+            <tfoot><tr style="border-top:1px solid var(--border)">
+              <td style="font-weight:700;padding-top:8px">Total Cost</td>
+              <td style="text-align:right;font-weight:700;color:#f1f5f9;padding-top:8px" id="drTotalCost">—</td>
+            </tr></tfoot>
+          </table>
+        </div>
+
+        <!-- Right col: Ads Run Rate + Tuesday Update stacked -->
+        <div class="dr-right-col">
+          <div class="card" style="margin-bottom:0">
+            <div class="card-header">
+              <h2 class="card-title">📈 Ads Run Rate</h2>
+              <span class="card-badge" id="drAdsRateBadge">—</span>
+            </div>
+            <table class="perf-table"><tbody id="drAdsRunBody"></tbody></table>
+          </div>
+          <div class="card" style="margin-bottom:0">
+            <div class="card-header">
+              <h2 class="card-title">📅 Tuesday Morning Update</h2>
+              <span class="card-badge" id="drTuesdayRange">—</span>
+            </div>
+            <table class="perf-table"><tbody id="drTuesdayBody"></tbody></table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── Charts ───────────────────────────────────────────── -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <h2 class="card-title">Daily Revenue &amp; Ads Spend</h2>
+          <span class="card-badge" id="drRevBadge">—</span>
+        </div>
+        <div class="chart-wrap"><canvas id="drRevChart"></canvas></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <h2 class="card-title">Daily ROAS</h2>
+          <span class="card-badge" id="drRoasBadge">—</span>
+        </div>
+        <div class="chart-wrap"><canvas id="drRoasChart"></canvas></div>
+      </div>
+
+      <!-- ── Daily Breakdown Table ─────────────────────────────── -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Daily Breakdown</h2>
+          <span class="card-badge" id="drTableBadge">—</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="perf-table">
+            <thead><tr>
+              <th>Date</th>
+              <th style="text-align:right">Revenue</th>
+              <th style="text-align:right">Ads Spend</th>
+              <th style="text-align:right">Mktpl Cost</th>
+              <th style="text-align:right">ROAS</th>
+            </tr></thead>
+            <tbody id="drTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end drContent -->
+  </main>
 </div>
 
 <div class="page-view" id="page-campaign">
@@ -491,6 +636,7 @@ function switchPage(page) {
   if(el)el.classList.add('active');
   const btn=document.querySelector('.page-tab[data-page="'+page+'"]');
   if(btn)btn.classList.add('active');
+  if(page==='daily')     loadDailyRoas();
   if(page==='campaign')  loadCampaigns();
   if(page==='livehost')  loadLiveHost();
   if(page==='tiktok')    loadTikTok();
