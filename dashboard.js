@@ -1225,261 +1225,160 @@ function renderLiveHost() {
 // ═══════════════════════════════════════════════════════════════
 // TIKTOK
 // ═══════════════════════════════════════════════════════════════
-const tt = { data:null, chart:null, loaded:false, currentTab:null };
+const MONTH_NAMES_TT  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_SHORT_TT  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-async function loadTikTok(tab) {
-  const url = '/api/tiktok' + (tab ? '?tab='+encodeURIComponent(tab) : '');
-  document.getElementById('ttLoading').style.display = 'flex';
-  document.getElementById('ttError').style.display   = 'none';
-  document.getElementById('ttContent').style.display = 'none';
-  try {
-    const res  = await fetch(url, { credentials:'same-origin' });
-    if (res.status===401) { window.location.href='/login.html'; return; }
-    const json = await res.json();
-    if (!res.ok || !json.success) throw new Error(json.detail || json.error);
-    tt.data = json; tt.currentTab = json.tab;
-    // Populate dropdown
-    const sel = document.getElementById('ttMonthSelect');
-    if (json.availTabs && json.availTabs.length) {
-      sel.innerHTML = json.availTabs.map(t=>
-        `<option value="${t}" ${t===json.tab?'selected':''}>${t}</option>`
-      ).join('');
-    }
-    document.getElementById('ttLoading').style.display = 'none';
-    document.getElementById('ttContent').style.display = 'block';
-    renderTikTok();
-  } catch(err) {
-    console.error(err);
-    document.getElementById('ttLoading').style.display = 'none';
-    document.getElementById('ttError').style.display   = 'flex';
-    document.getElementById('ttErrorMsg').textContent  = err.message;
-  }
-}
-
-function renderTikTok() {
-  const { totalRevenue, totalProfit, daily, tab } = tt.data;
-  const fmtRM = v => 'RM ' + v.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const margin = totalRevenue > 0 ? ((totalProfit/totalRevenue)*100).toFixed(1)+'%' : '—';
-  const roasDays = daily.filter(d=>d.roas>0);
-  const avgRoas  = roasDays.length ? (roasDays.reduce((a,d)=>a+d.roas,0)/roasDays.length).toFixed(2)+'x' : '—';
-
-  document.getElementById('ttStatRevenue').textContent   = fmtRM(totalRevenue);
-  document.getElementById('ttStatProfit').textContent    = fmtRM(totalProfit);
-  document.getElementById('ttStatMargin').textContent    = margin;
-  document.getElementById('ttStatRoas').textContent      = avgRoas;
-  document.getElementById('ttChartBadge').textContent    = tab;
-
-  if (tt.chart) tt.chart.destroy();
-  const activeDays = daily.filter(d=>d.sales>0);
-  const labels = activeDays.map(d=>{ const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
-
-  tt.chart = new Chart(document.getElementById('ttChart').getContext('2d'), {
-    type:'line',
-    data:{
-      labels,
-      datasets:[
-        {label:'TikTok Sales',data:activeDays.map(d=>d.sales),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',borderWidth:2,pointRadius:2,tension:0.3,fill:true},
-        {label:'Profit',      data:activeDays.map(d=>d.profit),borderColor:'#6366f1',backgroundColor:'transparent',borderWidth:2,pointRadius:2,tension:0.3},
-        {label:'Ads Cost',    data:activeDays.map(d=>d.adsCost),borderColor:'#ef4444',backgroundColor:'transparent',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3},
-      ],
-    },
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11},padding:16}},
-        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
-          titleColor:'#f1f5f9',bodyColor:'#94a3b8',
-          callbacks:{label:c=>` ${c.dataset.label}: RM${c.parsed.y.toLocaleString('en-MY',{minimumFractionDigits:2})}`}},
-      },
-      scales:{
-        x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45},grid:{color:'#1e293b'}},
-        y:{beginAtZero:true,ticks:{color:'#64748b',callback:v=>'RM'+v.toLocaleString()},grid:{color:'#273549'}},
-      },
-    },
-  });
-}
-
-
-// ═══════════════════════════════════════════════════════════════
-// SINGAPORE
-// ═══════════════════════════════════════════════════════════════
-const MONTH_NAMES_SG  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const MONTH_SHORT_SG  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-const sg = {
+const tt = {
   chart:       null,
   availMonths: [],  // [{ tab, month, year }]
   filterYear:  '',
   filterMonth: '',  // full month name e.g. "May"
 };
 
-// ── Init: fetch available tabs, default to current month ─────────
-async function loadSingapore(tabOverride) {
-  document.getElementById('sgLoading').style.display = 'flex';
-  document.getElementById('sgError').style.display   = 'none';
-  document.getElementById('sgContent').style.display = 'none';
+async function loadTikTok(tabOverride) {
+  document.getElementById('ttLoading').style.display = 'flex';
+  document.getElementById('ttError').style.display   = 'none';
+  document.getElementById('ttContent').style.display = 'none';
 
   try {
-    // Step 1: Get available tabs (only if not cached)
-    if (!sg.availMonths.length) {
-      const tabRes = await fetch('/api/singapore/tabs', { credentials:'same-origin' });
+    // Step 1: Get available tabs (cached)
+    if (!tt.availMonths.length) {
+      const tabRes = await fetch('/api/tiktok/tabs', { credentials:'same-origin' });
       if (tabRes.status === 401) { window.location.href='/login.html'; return; }
       const tabJson = await tabRes.json();
       if (!tabRes.ok || !tabJson.success) throw new Error(tabJson.detail || tabJson.error);
-      sg.availMonths = tabJson.availMonths;
-      buildSgPickers();
+      tt.availMonths = tabJson.availMonths;
+      buildTtPickers();
     }
 
     // Step 2: Determine which tab to load
     let useTab = tabOverride;
     if (!useTab) {
-      // Default to current month
       const now = new Date();
-      const curMonth = MONTH_NAMES_SG[now.getMonth()];
+      const curMonth = MONTH_NAMES_TT[now.getMonth()];
       const curYear  = String(now.getFullYear());
-      const match = sg.availMonths.find(m => m.month === curMonth && m.year === curYear);
-      useTab = match ? match.tab : (sg.availMonths[0]?.tab || null);
+      const match = tt.availMonths.find(m => m.month === curMonth && m.year === curYear);
+      useTab = match ? match.tab : (tt.availMonths[0]?.tab || null);
     }
-    if (!useTab) throw new Error('No data tabs found in this sheet.');
+    if (!useTab) throw new Error('No data tabs found in TikTok sheet.');
 
-    // Step 3: Fetch the data for selected tab
-    const dataRes = await fetch('/api/singapore?tab=' + encodeURIComponent(useTab), { credentials:'same-origin' });
+    // Step 3: Fetch data
+    const dataRes = await fetch('/api/tiktok?tab=' + encodeURIComponent(useTab), { credentials:'same-origin' });
     const dataJson = await dataRes.json();
     if (!dataRes.ok || !dataJson.success) throw new Error(dataJson.detail || dataJson.error);
 
-    // Update filter state to match loaded tab
-    const loaded = sg.availMonths.find(m => m.tab === useTab);
-    if (loaded) {
-      sg.filterYear  = loaded.year;
-      sg.filterMonth = loaded.month;
-      buildSgPickers(); // update highlighted month
-    }
+    // Update filter state
+    const loaded = tt.availMonths.find(m => m.tab === useTab);
+    if (loaded) { tt.filterYear = loaded.year; tt.filterMonth = loaded.month; buildTtPickers(); }
 
-    document.getElementById('sgLoading').style.display = 'none';
-    document.getElementById('sgContent').style.display = 'block';
-    renderSingapore(dataJson);
+    document.getElementById('ttLoading').style.display = 'none';
+    document.getElementById('ttContent').style.display = 'block';
+    renderTikTok(dataJson);
 
   } catch(err) {
-    console.error('[SG]', err);
-    document.getElementById('sgLoading').style.display = 'none';
-    document.getElementById('sgError').style.display   = 'flex';
-    document.getElementById('sgErrorMsg').textContent  = err.message;
+    console.error('[TikTok]', err);
+    document.getElementById('ttLoading').style.display = 'none';
+    document.getElementById('ttError').style.display   = 'flex';
+    document.getElementById('ttErrorMsg').textContent  = err.message;
   }
 }
 
-// ── Build year select + month grid ────────────────────────────────
-function buildSgPickers() {
-  const years = [...new Set(sg.availMonths.map(m => m.year))].sort().reverse();
-
-  // Year dropdown
-  const sel = document.getElementById('sgYearSelect');
+function buildTtPickers() {
+  const years = [...new Set(tt.availMonths.map(m => m.year))].sort().reverse();
+  const sel = document.getElementById('ttYearSelect');
   if (sel) {
     sel.innerHTML = '<option value="">All Years</option>';
     years.forEach(y => {
       const opt = document.createElement('option');
       opt.value = y; opt.textContent = y;
-      if (y === sg.filterYear) opt.selected = true;
+      if (y === tt.filterYear) opt.selected = true;
       sel.appendChild(opt);
     });
   }
-
-  buildSgMonthGrid();
+  buildTtMonthGrid();
 }
 
-function buildSgMonthGrid() {
-  const relevant = sg.filterYear
-    ? sg.availMonths.filter(m => m.year === sg.filterYear)
-    : sg.availMonths;
+function buildTtMonthGrid() {
+  const relevant = tt.filterYear
+    ? tt.availMonths.filter(m => m.year === tt.filterYear)
+    : tt.availMonths;
   const monthsWithData = new Set(relevant.map(m => m.month));
-
-  const grid = document.getElementById('sgMonthGrid');
+  const grid = document.getElementById('ttMonthGrid');
   if (!grid) return;
   grid.innerHTML = '';
-
-  MONTH_SHORT_SG.forEach((short, i) => {
-    const full     = MONTH_NAMES_SG[i];
+  MONTH_SHORT_TT.forEach((short, i) => {
+    const full     = MONTH_NAMES_TT[i];
     const hasData  = monthsWithData.has(full);
-    const selected = sg.filterMonth === full;
-
+    const selected = tt.filterMonth === full;
     const cell = document.createElement('div');
     cell.className = 'camp-month-cell ' + (selected ? 'selected' : hasData ? 'has-data' : 'no-data');
     cell.textContent = short;
     cell.title = hasData
       ? (selected ? `Viewing ${full}` : `View ${full}`)
-      : `No data for ${full}${sg.filterYear ? ' '+sg.filterYear : ''}`;
-
+      : `No data for ${full}${tt.filterYear ? ' '+tt.filterYear : ''}`;
     if (hasData) {
       cell.onclick = () => {
-        // Find the matching tab and load it
-        const match = sg.availMonths.find(m =>
-          m.month === full && (!sg.filterYear || m.year === sg.filterYear)
-        );
-        if (match) loadSingapore(match.tab);
+        const match = tt.availMonths.find(m => m.month === full && (!tt.filterYear || m.year === tt.filterYear));
+        if (match) loadTikTok(match.tab);
       };
     }
     grid.appendChild(cell);
   });
 }
 
-function setSgYear(year) {
-  sg.filterYear  = year;
-  sg.filterMonth = ''; // reset month when year changes
-  buildSgPickers();
-  // Auto-load first available month in selected year
-  const first = sg.availMonths.find(m => !year || m.year === year);
-  if (first) loadSingapore(first.tab);
+function setTtYear(year) {
+  tt.filterYear  = year;
+  tt.filterMonth = '';
+  buildTtPickers();
+  const first = tt.availMonths.find(m => !year || m.year === year);
+  if (first) loadTikTok(first.tab);
 }
 
-// ── Render ───────────────────────────────────────────────────────
-function renderSingapore(data) {
-  const { totalRevenueSGD, totalRevenueRM, totalProfit, profitMargin, daily, tab } = data;
+function renderTikTok(data) {
+  const { totalRevenue, totalProfit, daily, tab } = data;
+  const fmtRM = v => 'RM ' + (v||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const margin = totalRevenue > 0 ? ((totalProfit/totalRevenue)*100).toFixed(1)+'%' : '—';
+  const activeDays = (daily||[]).filter(d=>d.sales>0);
 
-  const fmtSGD = v => '$' + (v||0).toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const fmtRM  = v => 'RM' + (v||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  // Avg ROAS = avg(sales / adsCost) for days where adsCost > 0
+  const roasDays = activeDays.filter(d=>d.adsCost>0);
+  const avgRoas  = roasDays.length
+    ? (roasDays.reduce((a,d)=>a+(d.sales/d.adsCost),0)/roasDays.length).toFixed(2)+'x'
+    : '—';
 
-  const margin = profitMargin
-    ? profitMargin.toFixed(1) + '%'
-    : (totalRevenueSGD > 0 ? ((totalProfit/totalRevenueSGD)*100).toFixed(1)+'%' : '—');
+  document.getElementById('ttStatRevenue').textContent   = fmtRM(totalRevenue);
+  document.getElementById('ttStatRevenueSub').textContent= `Total sales`;
+  document.getElementById('ttStatProfit').textContent    = fmtRM(totalProfit);
+  document.getElementById('ttStatMargin').textContent    = margin;
+  document.getElementById('ttStatRoas').textContent      = avgRoas;
+  document.getElementById('ttChartBadge').textContent    = tab || (tt.filterMonth + ' ' + tt.filterYear);
 
-  const activeDays = (daily || []).filter(d => d.totalSales > 0);
-  const avgRoasVal = activeDays.length > 0
-    ? (activeDays.reduce((a,d) => a + (d.totalSales / (d.shopeeAdsSGD + d.googleAds + d.metaAdsSGD + 0.001)), 0) / activeDays.length)
-    : 0;
-
-  document.getElementById('sgStatSGD').textContent    = fmtSGD(totalRevenueSGD);
-  document.getElementById('sgStatRM').textContent     = totalRevenueRM > 0 ? `≈ ${fmtRM(totalRevenueRM)}` : '';
-  document.getElementById('sgStatProfit').textContent = fmtSGD(totalProfit);
-  document.getElementById('sgStatMargin').textContent = margin;
-  document.getElementById('sgStatRoas').textContent   = avgRoasVal > 0 ? avgRoasVal.toFixed(2)+'x' : '—';
-  document.getElementById('sgChartBadge').textContent = tab || sg.filterMonth + ' ' + sg.filterYear;
-
-  if (sg.chart) sg.chart.destroy();
+  if (tt.chart) tt.chart.destroy();
 
   if (!activeDays.length) {
-    document.getElementById('sgChart').parentElement.style.display = 'none';
+    document.getElementById('ttChart').parentElement.style.display = 'none';
     return;
   }
-  document.getElementById('sgChart').parentElement.style.display = '';
+  document.getElementById('ttChart').parentElement.style.display = '';
 
-  const labels = activeDays.map(d => { const p = d.date.split('/'); return `${p[0]}/${p[1]}`; });
+  const labels = activeDays.map(d => { const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
 
-  sg.chart = new Chart(document.getElementById('sgChart').getContext('2d'), {
+  tt.chart = new Chart(document.getElementById('ttChart').getContext('2d'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label:'Total Sales (SGD)', data:activeDays.map(d=>d.totalSales),
+        { label:'TikTok Sales', data:activeDays.map(d=>d.sales),
           borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.1)',
           borderWidth:2, pointRadius:2, tension:0.3, fill:true },
-        { label:'Website (Shopify)', data:activeDays.map(d=>d.websiteSG),
+        { label:'Profit', data:activeDays.map(d=>d.profit),
           borderColor:'#6366f1', backgroundColor:'transparent',
-          borderWidth:1.5, pointRadius:2, tension:0.3 },
-        { label:'Shopee SG', data:activeDays.map(d=>d.shopeeSG),
+          borderWidth:2, pointRadius:2, tension:0.3 },
+        { label:'Ads Cost', data:activeDays.map(d=>d.adsCost),
+          borderColor:'#ef4444', backgroundColor:'transparent',
+          borderWidth:1.5, borderDash:[4,3], pointRadius:0, tension:0.3 },
+        { label:'COGS', data:activeDays.map(d=>d.cogs),
           borderColor:'#f59e0b', backgroundColor:'transparent',
-          borderWidth:1.5, pointRadius:2, tension:0.3 },
-        { label:'Shopee MY (overs.sg)', data:activeDays.map(d=>d.shopeeMY),
-          borderColor:'#06b6d4', backgroundColor:'transparent',
           borderWidth:1.5, borderDash:[4,3], pointRadius:0, tension:0.3 },
       ],
     },
@@ -1491,12 +1390,92 @@ function renderSingapore(data) {
         tooltip:{
           backgroundColor:'#1e293b', borderColor:'#334155', borderWidth:1,
           titleColor:'#f1f5f9', bodyColor:'#94a3b8',
-          callbacks:{ label: c => ` ${c.dataset.label}: $${c.parsed.y.toLocaleString('en-SG',{minimumFractionDigits:2})}` },
+          callbacks:{ label: c => ` ${c.dataset.label}: RM${c.parsed.y.toLocaleString('en-MY',{minimumFractionDigits:2})}` },
         },
       },
       scales:{
         x:{ ticks:{ color:'#64748b', font:{size:10}, maxRotation:45 }, grid:{ color:'#1e293b' } },
-        y:{ beginAtZero:true, ticks:{ color:'#64748b', callback: v=>'$'+v.toLocaleString() }, grid:{ color:'#273549' } },
+        y:{ beginAtZero:true, ticks:{ color:'#64748b', callback:v=>'RM'+v.toLocaleString() }, grid:{ color:'#273549' } },
+      },
+    },
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SINGAPORE
+// ═══════════════════════════════════════════════════════════════
+const sg = { data:null, chart:null, loaded:false, currentTab:null };
+
+async function loadSingapore(tab) {
+  const url = '/api/singapore' + (tab ? '?tab='+encodeURIComponent(tab) : '');
+  document.getElementById('sgLoading').style.display = 'flex';
+  document.getElementById('sgError').style.display   = 'none';
+  document.getElementById('sgContent').style.display = 'none';
+  try {
+    const res  = await fetch(url, { credentials:'same-origin' });
+    if (res.status===401) { window.location.href='/login.html'; return; }
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.detail || json.error);
+    sg.data = json; sg.currentTab = json.tab;
+    const sel = document.getElementById('sgMonthSelect');
+    if (json.availTabs && json.availTabs.length) {
+      sel.innerHTML = json.availTabs.map(t=>
+        `<option value="${t}" ${t===json.tab?'selected':''}>${t}</option>`
+      ).join('');
+    }
+    document.getElementById('sgLoading').style.display = 'none';
+    document.getElementById('sgContent').style.display = 'block';
+    renderSingapore();
+  } catch(err) {
+    console.error(err);
+    document.getElementById('sgLoading').style.display = 'none';
+    document.getElementById('sgError').style.display   = 'flex';
+    document.getElementById('sgErrorMsg').textContent  = err.message;
+  }
+}
+
+function renderSingapore() {
+  const { totalRevenueSGD, totalRevenueRM, totalProfit, daily, tab } = sg.data;
+  const fmtSGD = v => '$' + v.toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtRM  = v => 'RM ' + v.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const margin = totalRevenueSGD > 0 ? ((totalProfit/totalRevenueSGD)*100).toFixed(1)+'%' : '—';
+  const roasDays = daily.filter(d=>d.roas>0);
+  const avgRoas  = roasDays.length ? (roasDays.reduce((a,d)=>a+d.roas,0)/roasDays.length).toFixed(2)+'x' : '—';
+
+  document.getElementById('sgStatSGD').textContent    = fmtSGD(totalRevenueSGD);
+  document.getElementById('sgStatRM').textContent     = `≈ ${fmtRM(totalRevenueRM)}`;
+  document.getElementById('sgStatProfit').textContent = fmtSGD(totalProfit);
+  document.getElementById('sgStatMargin').textContent = margin;
+  document.getElementById('sgStatRoas').textContent   = avgRoas;
+  document.getElementById('sgChartBadge').textContent = tab;
+
+  if (sg.chart) sg.chart.destroy();
+  const activeDays = daily.filter(d=>d.totalSales>0);
+  const labels = activeDays.map(d=>{ const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
+
+  sg.chart = new Chart(document.getElementById('sgChart').getContext('2d'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {label:'Total Sales (SGD)',data:activeDays.map(d=>d.totalSales),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',borderWidth:2,pointRadius:2,tension:0.3,fill:true},
+        {label:'Website SG',      data:activeDays.map(d=>d.websiteSG), borderColor:'#6366f1',backgroundColor:'transparent',borderWidth:1.5,pointRadius:2,tension:0.3},
+        {label:'Shopee SG',       data:activeDays.map(d=>d.shopeeSG),  borderColor:'#f59e0b',backgroundColor:'transparent',borderWidth:1.5,pointRadius:2,tension:0.3},
+      ],
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11},padding:16}},
+        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
+          titleColor:'#f1f5f9',bodyColor:'#94a3b8',
+          callbacks:{label:c=>` ${c.dataset.label}: $${c.parsed.y.toLocaleString('en-SG',{minimumFractionDigits:2})}`}},
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45},grid:{color:'#1e293b'}},
+        y:{beginAtZero:true,ticks:{color:'#64748b',callback:v=>'$'+v.toLocaleString()},grid:{color:'#273549'}},
       },
     },
   });
