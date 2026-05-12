@@ -233,21 +233,6 @@ function parseCampaignData(rows) {
 
   const cleanStr = s => String(s || '').trim();
 
-  // Regex: matches ONLY "MonthName" or "MonthName YYYY" — nothing else
-  const MONTH_HEADER_RE = new RegExp('^(' + MONTH_NAMES_LIST.join('|') + ')\s*(\d{4})?$', 'i');
-
-  function detectMonthHeader(row) {
-    // Check each cell individually — the header can be in ANY column
-    // (merged cells in Sheets return value only in the first cell of the merge)
-    for (const cell of row) {
-      const val = cleanStr(cell);
-      if (!val) continue;
-      const m = val.match(MONTH_HEADER_RE);
-      if (m) return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
-    }
-    return null;
-  }
-
   rows.forEach(row => {
     if (!row || row.length === 0) return;
 
@@ -257,19 +242,21 @@ function parseCampaignData(rows) {
     // Skip header rows
     if (colA === 'Type' || colB === 'Campaign') return;
 
-    // ── Month divider row ──────────────────────────────────────
-    // Can appear with colA empty OR with month name in colA (merged cell starting at A)
-    const isNotCampaignRow = colA !== 'Campaign' && colA !== 'Launch';
-    if (isNotCampaignRow) {
-      const foundMonth = detectMonthHeader(row);
+    // Check for month divider: A is empty, and any col has a month name
+    if (!colA) {
+      // Look for month name anywhere in the row
+      const rowText = row.map(c => cleanStr(c)).join(' ').toUpperCase();
+      const foundMonth = MONTH_NAMES_LIST.find(m => rowText.includes(m.toUpperCase()));
+
       if (foundMonth) {
+        // It's a month divider row — save any pending and update month
         if (pendingCampaign) { campaigns.push(pendingCampaign); pendingCampaign = null; }
         currentMonth = foundMonth;
         return;
       }
 
-      // Empty colA + no month → units data row for pending campaign
-      if (!colA && pendingCampaign) {
+      // Otherwise it's a units data row for the pending campaign
+      if (pendingCampaign) {
         pendingCampaign.unitsBefore = cleanNum(row[5]);
         pendingCampaign.unitsDuring = cleanNum(row[6]);
         pendingCampaign.unitsAfter  = cleanNum(row[7]);
@@ -291,16 +278,20 @@ function parseCampaignData(rows) {
       if (rawPlatform.includes('MY Offline')) platforms.push('MY Offline');
       if (platforms.length === 0 && rawPlatform) platforms.push(rawPlatform);
 
-      // Extract year from startDate e.g. "09/04/2026" → "2026"
+      // Derive month + year directly from Start Date "DD/MM/YYYY" — reliable, no header parsing needed
       const rawStart = cleanStr(row[3]);
-      let year = '';
+      let year = '', month = currentMonth;
       if (rawStart && rawStart !== '-') {
         const yp = rawStart.split('/');
-        if (yp.length === 3 && yp[2].length === 4) year = yp[2];
+        if (yp.length === 3 && yp[2].length === 4) {
+          year  = yp[2];
+          const mIdx = parseInt(yp[1], 10) - 1;  // 0-based
+          if (mIdx >= 0 && mIdx < 12) month = MONTH_NAMES_LIST[mIdx];
+        }
       }
 
       pendingCampaign = {
-        month:        currentMonth,
+        month,
         year,
         type:         colA,
         name:         cleanStr(row[1]),
