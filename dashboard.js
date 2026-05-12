@@ -23,9 +23,10 @@ const MONTH_NAMES  = ['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
 
 function roasRating(v) {
-  if (v >= 5) return { label:'Excellent', cls:'roas-excellent' };
-  if (v >= 3) return { label:'Good',      cls:'roas-good'      };
-  return           { label:'Poor',       cls:'roas-poor'      };
+  if (!v || v === 0) return { label:'Not performing', cls:'roas-not-perf' };
+  if (v >= 5)        return { label:'Excellent',       cls:'roas-excellent' };
+  if (v >= 3)        return { label:'Good',            cls:'roas-good'      };
+  return                    { label:'Poor',            cls:'roas-poor'      };
 }
 
 function rkey(mi, d) { return mi * 1000 + d; }
@@ -546,9 +547,9 @@ function renderStats(slice) {
   const sorted=[...products].sort((a,b)=>b.avgROAS-a.avgROAS);
   const top=sorted[0],worst=sorted[sorted.length-1];
   document.getElementById('statTop').textContent   =top  ?top.name  :'—';
-  document.getElementById('statTopSub').textContent=top  ?`ROAS: ${fmt(top.avgROAS)}`  :'';
+  document.getElementById('statTopSub').textContent=top  ?(top.avgROAS>0?`ROAS: ${fmt(top.avgROAS)}`:'Not performing')  :'';
   document.getElementById('statLow').textContent   =worst?worst.name:'—';
-  document.getElementById('statLowSub').textContent=worst?`ROAS: ${fmt(worst.avgROAS)}`:'';
+  document.getElementById('statLowSub').textContent=worst?(worst.avgROAS>0?`ROAS: ${fmt(worst.avgROAS)}`:'Not performing'):'';
   const active=grandTotal.dailyROAS.filter(v=>v!==null&&v>0).length;
   document.getElementById('statDays').textContent   =active;
   document.getElementById('statDaysSub').textContent=`of ${dates.length} day${dates.length!==1?'s':''}`;
@@ -639,7 +640,7 @@ function renderBarChart(slice, allProducts) {
             label: ctx=>{
               if (ctx.dataset.type==='line') return ` ${ctx.dataset.label}`;
               const productName=ctx.label;
-              const lines=[` ROAS: ${fmt(ctx.parsed.y)}`];
+              const roasVal=ctx.parsed.y;
 
               // Always look up Ads Spent + Sales — even if ROAS=0
               const dayData=(dateStr&&state.salesData)?state.salesData[dateStr]||{}:{};
@@ -647,16 +648,20 @@ function renderBarChart(slice, allProducts) {
 
               if (productName==='OB + OB Pro') {
                 const obE=dayData['OB'], obPE=dayData['OB Pro'];
-                // Show even if both are 0
                 if (obE!==undefined||obPE!==undefined) {
                   adsSpent=(obE?.adsSpent||0)+(obPE?.adsSpent||0);
                   sales   =(obE?.sales   ||0)+(obPE?.sales   ||0);
                 }
               } else {
                 const entry=dayData[productName];
-                // entry exists (even if adsSpent=0 & sales=0) → show it
                 if (entry!==undefined) { adsSpent=entry.adsSpent; sales=entry.sales; }
               }
+
+              const notPerforming = adsSpent !== null && adsSpent < 15;
+              const roasLine = notPerforming
+                ? ` ROAS: Not performing`
+                : ` ROAS: ${fmt(roasVal)}`;
+              const lines=[roasLine];
 
               if (adsSpent!==null) {
                 const fmtRM=v=>'RM '+v.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -689,9 +694,10 @@ function renderTable(products) {
   else if (state.sortOrder==='asc') sorted.sort((a,b)=>a.avgROAS-b.avgROAS);
   sorted.forEach(p=>{
     const {label,cls}=roasRating(p.avgROAS);
+    const roasDisplay = p.avgROAS > 0 ? `<span style="font-size:1rem;font-weight:700;color:#f1f5f9">${fmt(p.avgROAS)}</span>` : `<span style="color:var(--text-muted);font-size:.85rem">—</span>`;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td style="font-weight:600">${p.name}</td>
-      <td><span style="font-size:1rem;font-weight:700;color:#f1f5f9">${fmt(p.avgROAS)}</span></td>
+      <td>${roasDisplay}</td>
       <td><span class="roas-badge ${cls}">${label}</span></td>`;
     tbody.appendChild(tr);
   });
@@ -705,11 +711,12 @@ function renderRanks(products){
 function renderRankList(id,items){
   const ul=document.getElementById(id);ul.innerHTML='';
   items.forEach((p,i)=>{
-    const {cls}=roasRating(p.avgROAS);
+    const {label,cls}=roasRating(p.avgROAS);
+    const badgeText = p.avgROAS > 0 ? fmt(p.avgROAS) : label;
     const li=document.createElement('li');li.className='rank-item';
     li.innerHTML=`<span class="rank-num">${i+1}</span>
       <span class="rank-name">${p.name}</span>
-      <span class="roas-badge ${cls}" style="font-size:.76rem">${fmt(p.avgROAS)}</span>`;
+      <span class="roas-badge ${cls}" style="font-size:.76rem">${badgeText}</span>`;
     ul.appendChild(li);
   });
 }
@@ -769,9 +776,11 @@ function renderCompare(){
   tbody.innerHTML='';
   allNames.forEach(name=>{
     const vals=monthsData.map(m=>{const p=m.slice.products.find(p=>p.name===name);return p?p.avgROAS:null;});
-    const maxV=Math.max(...vals.filter(v=>v!==null)),bi=vals.indexOf(maxV);
-    const cells=vals.map(v=>{const {cls}=v!==null?roasRating(v):{cls:''};
-      return `<td class="${v===maxV&&v>0?'compare-best':''}"><span class="roas-badge ${cls}">${v!==null?fmt(v):'—'}</span></td>`;
+    const maxV=Math.max(...vals.filter(v=>v!==null&&v>0)),bi=vals.findIndex(v=>v===maxV&&v>0);
+    const cells=vals.map(v=>{
+      const {label,cls}=v!==null?roasRating(v):{cls:''};
+      const badgeText = v===null ? '—' : (v>0 ? fmt(v) : label);
+      return `<td class="${v===maxV&&v>0?'compare-best':''}"><span class="roas-badge ${v!==null?cls:''}">${badgeText}</span></td>`;
     }).join('');
     tbody.innerHTML+=`<tr><td style="font-weight:600">${name}</td>${cells}<td><span style="color:${monthsData[bi]?.color};font-weight:700">${maxV>0?(monthsData[bi]?.name||'—'):'—'}</span></td></tr>`;
   });
