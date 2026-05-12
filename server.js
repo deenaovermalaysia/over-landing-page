@@ -233,6 +233,21 @@ function parseCampaignData(rows) {
 
   const cleanStr = s => String(s || '').trim();
 
+  // Regex: matches ONLY "MonthName" or "MonthName YYYY" — nothing else
+  const MONTH_HEADER_RE = new RegExp('^(' + MONTH_NAMES_LIST.join('|') + ')\s*(\d{4})?$', 'i');
+
+  function detectMonthHeader(row) {
+    // Check each cell individually — the header can be in ANY column
+    // (merged cells in Sheets return value only in the first cell of the merge)
+    for (const cell of row) {
+      const val = cleanStr(cell);
+      if (!val) continue;
+      const m = val.match(MONTH_HEADER_RE);
+      if (m) return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    }
+    return null;
+  }
+
   rows.forEach(row => {
     if (!row || row.length === 0) return;
 
@@ -242,24 +257,19 @@ function parseCampaignData(rows) {
     // Skip header rows
     if (colA === 'Type' || colB === 'Campaign') return;
 
-    // Check for month divider: A is empty, and non-empty cells form ONLY "Month [Year]"
-    // Strict check prevents date-range strings like "09 Feb - 10 May 2026" from false-matching
-    if (!colA) {
-      const nonEmpty = row.map(c => cleanStr(c)).filter(Boolean).join(' ').trim();
-      const monthHeaderMatch = nonEmpty.match(
-        new RegExp('^(' + MONTH_NAMES_LIST.join('|') + ')\\s*(\\d{4})?$', 'i')
-      );
-      const foundMonth = monthHeaderMatch ? monthHeaderMatch[1] : null;
-
+    // ── Month divider row ──────────────────────────────────────
+    // Can appear with colA empty OR with month name in colA (merged cell starting at A)
+    const isNotCampaignRow = colA !== 'Campaign' && colA !== 'Launch';
+    if (isNotCampaignRow) {
+      const foundMonth = detectMonthHeader(row);
       if (foundMonth) {
-        // It's a month divider row — save any pending and update month
         if (pendingCampaign) { campaigns.push(pendingCampaign); pendingCampaign = null; }
-        currentMonth = foundMonth.charAt(0).toUpperCase() + foundMonth.slice(1).toLowerCase();
+        currentMonth = foundMonth;
         return;
       }
 
-      // Otherwise it's a units data row for the pending campaign
-      if (pendingCampaign) {
+      // Empty colA + no month → units data row for pending campaign
+      if (!colA && pendingCampaign) {
         pendingCampaign.unitsBefore = cleanNum(row[5]);
         pendingCampaign.unitsDuring = cleanNum(row[6]);
         pendingCampaign.unitsAfter  = cleanNum(row[7]);
