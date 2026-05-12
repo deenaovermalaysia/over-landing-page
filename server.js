@@ -489,65 +489,104 @@ app.get('/api/tiktok', requireAuth, async (req, res) => {
 
 // ─── Singapore parsers ────────────────────────────────────────
 function parseSingaporeData(rows) {
-  let totalRevenueSGD = 0, totalRevenueRM = 0, totalProfit = 0;
+  // Row 1 (index 0): "TOTAL Revenue" with $ and RM values across cols A-I
+  // Row 2 (index 1): "TOTAL Profit (exclude operation)" with $ value
+  let totalRevenueSGD = 0, totalRevenueRM = 0, totalProfit = 0, profitMargin = 0;
+
   (rows[0] || []).forEach(cell => {
-    const s = String(cell || '');
-    if (s.startsWith('$') && !totalRevenueSGD) totalRevenueSGD = extCleanNum(s);
-    if (s.startsWith('RM') && !totalRevenueRM) totalRevenueRM  = extCleanNum(s);
+    const s = String(cell || '').trim();
+    if (s.startsWith('$') && !totalRevenueSGD)  totalRevenueSGD = extCleanNum(s);
+    if (s.startsWith('RM') && !totalRevenueRM)   totalRevenueRM  = extCleanNum(s);
   });
   (rows[1] || []).forEach(cell => {
-    const s = String(cell || '');
-    if (s.startsWith('$') && !totalProfit) totalProfit = extCleanNum(s);
+    const s = String(cell || '').trim();
+    if (s.startsWith('$') && !totalProfit)        totalProfit  = extCleanNum(s);
+    if (s.endsWith('%') && !profitMargin)          profitMargin = extCleanNum(s);
   });
 
+  // Row 4+ (index 3+): daily data — date in col A (index 0) for this range
   const daily = [];
   for (let i = 3; i < rows.length; i++) {
     const row = rows[i] || [];
-    const ds = String(row[1] || row[0] || '').trim();
+    const ds = String(row[0] || '').trim();
     if (!ds || !/\d{1,2}\/\d{2}\/\d{4}/.test(ds)) continue;
-    daily.push({ date:ds,
-      shopeeAds: extCleanNum(row[2]), googleAds: extCleanNum(row[3]),
-      metaAdsRM: extCleanNum(row[5]), shopeeMY: extCleanNum(row[6]),
-      shopeeSG:  extCleanNum(row[7]), websiteSG: extCleanNum(row[8]),
-      totalSales:extCleanNum(row[9]),
-      roasShopee:extCleanNum(row[10]), roasWebsite:extCleanNum(row[11]), roas:extCleanNum(row[12]) });
+    // Cols: A=Date, B=Shopee Ads MY SG($), C=Google Ads($), D=Meta Ads($),
+    //       E=Meta Ads(RM), F=Shopee MY SG, G=Shopee SG, H=Website SG(Shopify), I=Total Sales
+    const totalSales = extCleanNum(row[8]);
+    if (totalSales === 0 && !row[1]) continue; // skip truly empty rows
+    daily.push({
+      date:       ds,
+      shopeeAdsSGD: extCleanNum(row[1]),
+      googleAds:    extCleanNum(row[2]),
+      metaAdsSGD:   extCleanNum(row[3]),
+      metaAdsRM:    extCleanNum(row[4]),
+      shopeeMY:     extCleanNum(row[5]),
+      shopeeSG:     extCleanNum(row[6]),
+      websiteSG:    extCleanNum(row[7]),
+      totalSales,
+    });
   }
-  return { totalRevenueSGD, totalRevenueRM, totalProfit, daily };
+
+  return { totalRevenueSGD, totalRevenueRM, totalProfit, profitMargin, daily };
 }
+
+// ─── Singapore: list available month tabs ─────────────────────
+app.get('/api/singapore/tabs', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const meta   = await sheets.spreadsheets.get({ spreadsheetId: SINGAPORE_ID });
+    const allTabNames = meta.data.sheets.map(s => s.properties.title);
+
+    // Match tabs like "May 2026", "Feb 2026", "January 2026" etc.
+    const MONTH_PATTERN = /^([A-Za-z]+)\s+(\d{4})$/;
+    const MONTH_NAMES_MAP = {
+      jan:'January',feb:'February',mar:'March',apr:'April',may:'May',jun:'June',
+      jul:'July',aug:'August',sep:'September',oct:'October',nov:'November',dec:'December',
+    };
+    const availMonths = [];
+    allTabNames.forEach(t => {
+      const m = t.match(MONTH_PATTERN);
+      if (!m) return;
+      const rawMonth = m[1], year = m[2];
+      // Normalise to full month name
+      const key = rawMonth.toLowerCase().slice(0,3);
+      const fullMonth = MONTH_NAMES_MAP[key] || rawMonth;
+      availMonths.push({ tab: t, month: fullMonth, year });
+    });
+    // Sort newest first
+    availMonths.sort((a, b) => {
+      const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      const byYear = parseInt(b.year) - parseInt(a.year);
+      if (byYear !== 0) return byYear;
+      return MONTHS.indexOf(b.month) - MONTHS.indexOf(a.month);
+    });
+
+    res.json({ success: true, availMonths });
+  } catch(err) {
+    console.error('[SG Tabs]', err.message);
+    res.status(500).json({ error: 'Failed', detail: err.message });
+  }
+});
 
 app.get('/api/singapore', requireAuth, async (req, res) => {
   try {
     const auth   = getGoogleAuth();
     const sheets = google.sheets({ version: 'v4', auth });
     const { tab } = req.query;
+    if (!tab) return res.status(400).json({ error: 'tab required' });
 
-    // Generate last 12 months as title-case tab names e.g. "May 2026"
-    // Singapore sheet uses short form for some months e.g. "Feb 2026"
-    const MONTHS_TC_SHORT = ['Jan','Feb','Mar','Apr','May','Jun',
-                             'Jul','Aug','Sep','Oct','Nov','Dec'];
-    const MONTHS_TC_FULL  = ['January','February','March','April','May','June',
-                             'July','August','September','October','November','December'];
-    const nowSG = new Date();
-    const availTabs = [];
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(nowSG.getFullYear(), nowSG.getMonth() - i, 1);
-      // Try full month name first; the actual tab name will be tried on fetch
-      availTabs.push(`${MONTHS_TC_FULL[d.getMonth()]} ${d.getFullYear()}`);
-    }
-
-    const useTab = tab || availTabs[0];
-    if (!useTab) return res.status(400).json({ error:'No tab' });
-
+    // Fetch rows 1-2 (totals) + row 3 (headers) + daily data: A1:I35
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId: SINGAPORE_ID,
-      range: `'${useTab}'!A1:R35`,
+      range: `'${tab}'!A1:I35`,
       valueRenderOption: 'FORMATTED_VALUE',
     });
     const data = parseSingaporeData(resp.data.values || []);
-    res.json({ success:true, tab:useTab, availTabs, ...data });
+    res.json({ success: true, tab, ...data });
   } catch(err) {
     console.error('[Singapore]', err.message);
-    res.status(500).json({ error:'Failed', detail: err.message });
+    res.status(500).json({ error: 'Failed', detail: err.message });
   }
 });
 
