@@ -418,9 +418,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  document.getElementById('dateRangeTrigger').addEventListener('click', openCalendar);
+  const drt = document.getElementById('dateRangeTrigger');
+  if (drt) drt.addEventListener('click', openCalendar);
 
-  document.getElementById('toggleAll').addEventListener('change', e => {
+  const tgl = document.getElementById('toggleAll');
+  if (tgl) tgl.addEventListener('change', e => {
     const allNames = new Set(state.allData.flatMap(m => m.products.map(p => p.name)));
     if (e.target.checked) state.hiddenProducts.clear();
     else allNames.forEach(n => state.hiddenProducts.add(n));

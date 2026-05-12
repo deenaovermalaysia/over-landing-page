@@ -278,16 +278,20 @@ function parseCampaignData(rows) {
       if (rawPlatform.includes('MY Offline')) platforms.push('MY Offline');
       if (platforms.length === 0 && rawPlatform) platforms.push(rawPlatform);
 
-      // Extract year from startDate e.g. "09/04/2026" → "2026"
+      // Derive month + year from Start Date "DD/MM/YYYY" — reliable, no header parsing needed
       const rawStart = cleanStr(row[3]);
-      let year = '';
+      let year = '', month = currentMonth;
       if (rawStart && rawStart !== '-') {
         const yp = rawStart.split('/');
-        if (yp.length === 3 && yp[2].length === 4) year = yp[2];
+        if (yp.length === 3 && yp[2].length === 4) {
+          year = yp[2];
+          const mIdx = parseInt(yp[1], 10) - 1;
+          if (mIdx >= 0 && mIdx < 12) month = MONTH_NAMES_LIST[mIdx];
+        }
       }
 
       pendingCampaign = {
-        month:        currentMonth,
+        month,
         year,
         type:         colA,
         name:         cleanStr(row[1]),
