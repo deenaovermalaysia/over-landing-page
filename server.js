@@ -412,12 +412,15 @@ app.get('/api/live-host', requireAuth, async (req, res) => {
       missedLives = parseMissedLives(slotsRes.data.values || []);
     } catch(e) { console.warn('[Live Slots] Tab not found:', slotTab); }
 
-    let slotTabs = [];
-    try {
-      const meta = await sheets.spreadsheets.get({ spreadsheetId: LIVE_HOST_SLOTS_ID });
-      slotTabs = meta.data.sheets.map(s => s.properties.title)
-        .filter(t => /^[A-Za-z]+ \(\d{4}\)$/.test(t)).reverse();
-    } catch(e) {}
+    // Generate last 12 months as slot tab names e.g. "May (2026)"
+    const nowLH = new Date();
+    const slotTabs = [];
+    const MONTHS_LH = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(nowLH.getFullYear(), nowLH.getMonth() - i, 1);
+      slotTabs.push(`${MONTHS_LH[d.getMonth()]} (${d.getFullYear()})`);
+    }
 
     const hosts = parseHostRevenue(revenueRes.data.values || []);
     res.json({ success:true, hosts, missedLives, slotsMonth: slotTab, slotTabs });
@@ -458,12 +461,15 @@ app.get('/api/tiktok', requireAuth, async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const { tab } = req.query;
 
-    let availTabs = [];
-    try {
-      const meta = await sheets.spreadsheets.get({ spreadsheetId: TIKTOK_ID });
-      availTabs = meta.data.sheets.map(s => s.properties.title)
-        .filter(t => /^[A-Z]+ \d{4}$/.test(t)).reverse();
-    } catch(e) {}
+    // Generate last 12 months as uppercase tab names e.g. "MAY 2026"
+    const MONTHS_UC = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
+                       'JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+    const now = new Date();
+    const availTabs = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      availTabs.push(`${MONTHS_UC[d.getMonth()]} ${d.getFullYear()}`);
+    }
 
     const useTab = tab || availTabs[0];
     if (!useTab) return res.status(400).json({ error:'No tab' });
@@ -515,12 +521,19 @@ app.get('/api/singapore', requireAuth, async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const { tab } = req.query;
 
-    let availTabs = [];
-    try {
-      const meta = await sheets.spreadsheets.get({ spreadsheetId: SINGAPORE_ID });
-      availTabs = meta.data.sheets.map(s => s.properties.title)
-        .filter(t => /^[A-Za-z]+ \d{4}$/.test(t)).reverse();
-    } catch(e) {}
+    // Generate last 12 months as title-case tab names e.g. "May 2026"
+    // Singapore sheet uses short form for some months e.g. "Feb 2026"
+    const MONTHS_TC_SHORT = ['Jan','Feb','Mar','Apr','May','Jun',
+                             'Jul','Aug','Sep','Oct','Nov','Dec'];
+    const MONTHS_TC_FULL  = ['January','February','March','April','May','June',
+                             'July','August','September','October','November','December'];
+    const nowSG = new Date();
+    const availTabs = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(nowSG.getFullYear(), nowSG.getMonth() - i, 1);
+      // Try full month name first; the actual tab name will be tried on fetch
+      availTabs.push(`${MONTHS_TC_FULL[d.getMonth()]} ${d.getFullYear()}`);
+    }
 
     const useTab = tab || availTabs[0];
     if (!useTab) return res.status(400).json({ error:'No tab' });

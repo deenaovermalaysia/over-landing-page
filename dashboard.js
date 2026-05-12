@@ -418,11 +418,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  const drt = document.getElementById('dateRangeTrigger');
-  if (drt) drt.addEventListener('click', openCalendar);
+  const drt=document.getElementById('dateRangeTrigger'); if(drt) drt.addEventListener('click', openCalendar);
 
-  const tgl = document.getElementById('toggleAll');
-  if (tgl) tgl.addEventListener('change', e => {
+  const tgl=document.getElementById('toggleAll'); if(tgl) tgl.addEventListener('change', e => {
     const allNames = new Set(state.allData.flatMap(m => m.products.map(p => p.name)));
     if (e.target.checked) state.hiddenProducts.clear();
     else allNames.forEach(n => state.hiddenProducts.add(n));
@@ -941,10 +939,11 @@ function filterCampaigns() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
-function calcLift(before, during) {
-  if (before === null || during === null) return null;
-  if (before === 0) return during > 0 ? 999 : null;
-  return ((during - before) / before) * 100;
+function calcLift(before, during, after) {
+  const ref = (before !== null) ? before : (after !== null ? after : null);
+  if (ref === null || during === null) return null;
+  if (ref === 0) return during > 0 ? 999 : null;
+  return ((during - ref) / ref) * 100;
 }
 
 function fmtLift(lift) {
@@ -965,13 +964,13 @@ function renderCampaigns() {
 
   // Stat cards
   const withData = data.filter(c => c.unitsBefore !== null && c.unitsDuring !== null);
-  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring)).filter(l => l !== null && l !== 999);
+  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter)).filter(l => l !== null && l !== 999);
   const avgLift  = lifts.length ? lifts.reduce((a,b)=>a+b,0)/lifts.length : null;
-  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring) || 0) < 0).length;
+  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter) || 0) < 0).length;
 
   let bestLift = null, bestName = '—';
   withData.forEach(c => {
-    const l = calcLift(c.unitsBefore, c.unitsDuring);
+    const l = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
     if (l !== null && (bestLift === null || l > bestLift)) { bestLift = l; bestName = c.name; }
   });
 
@@ -994,6 +993,23 @@ function renderCampaigns() {
   // ── Bar chart with detailed tooltip ─────────────────────────
   if (camp.chart) camp.chart.destroy();
   const ctx = document.getElementById('campChart').getContext('2d');
+
+  // During: green if higher than reference, red if lower (use Before; fallback to After)
+  const duringBg = data.map(c => {
+    const ref = c.unitsBefore !== null ? c.unitsBefore : c.unitsAfter;
+    if (ref === null || c.unitsDuring === null) return 'rgba(100,116,139,.55)';
+    if (c.unitsDuring > ref) return 'rgba(34,197,94,.78)';
+    if (c.unitsDuring < ref) return 'rgba(239,68,68,.78)';
+    return 'rgba(100,116,139,.55)';
+  });
+  const duringBorder = data.map(c => {
+    const ref = c.unitsBefore !== null ? c.unitsBefore : c.unitsAfter;
+    if (ref === null || c.unitsDuring === null) return '#64748b';
+    if (c.unitsDuring > ref) return '#22c55e';
+    if (c.unitsDuring < ref) return '#ef4444';
+    return '#64748b';
+  });
+
   const labels = data.map(c => {
     const period = c.month ? c.month.slice(0,3) + (c.year ? " '" + c.year.slice(2) : '') : '';
     const name   = c.name.length > 22 ? c.name.slice(0,20) + '…' : c.name;
@@ -1005,9 +1021,9 @@ function renderCampaigns() {
     data: {
       labels,
       datasets: [
-        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.55)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
-        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:'rgba(99,102,241,.75)',  borderColor:'#6366f1', borderWidth:1, borderRadius:3 },
-        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(34,197,94,.6)',   borderColor:'#22c55e', borderWidth:1, borderRadius:3 },
+        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.45)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
+        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:duringBg, borderColor:duringBorder, borderWidth:1, borderRadius:3 },
+        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(100,116,139,.28)', borderColor:'#475569', borderWidth:1, borderRadius:3 },
       ],
     },
     options: {
@@ -1040,7 +1056,7 @@ function renderCampaigns() {
               if (c.beforeRange) lines.push(`📅 Before:  ${c.beforeRange}`);
               if (c.duringRange) lines.push(`📅 During:  ${c.duringRange}`);
               if (c.afterRange)  lines.push(`📅 After:   ${c.afterRange}`);
-              const lift = calcLift(c.unitsBefore, c.unitsDuring);
+              const lift = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
               if (lift !== null) lines.push(`📈 Lift:    ${fmtLift(lift).text}`);
               if (c.giftItem)   lines.push(`🎁 Gift:    ${c.giftItem}${c.giftClaimed ? ' ('+c.giftClaimed+' claimed)' : ''}`);
               return lines;
@@ -1065,7 +1081,7 @@ function renderCampaigns() {
   }
 
   data.forEach(c => {
-    const lift = calcLift(c.unitsBefore, c.unitsDuring);
+    const lift = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
     const { text:liftText, cls:liftCls } = fmtLift(lift);
     const rowCls = lift===null?'' : lift>20?'camp-row-great' : lift>0?'camp-row-good' : 'camp-row-bad';
 
