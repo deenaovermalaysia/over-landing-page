@@ -238,18 +238,14 @@
 <div class="page-view" id="page-tiktok">
   <aside class="sidebar">
     <div class="sb-section">
-      <p class="sb-label">Year</p>
-      <select id="ttYearSelect" class="select-input" onchange="setTtYear(this.value)">
-        <option value="">All Years</option>
+      <p class="sb-label">Month</p>
+      <select id="ttMonthSelect" class="select-input" onchange="loadTikTok(this.value)">
+        <option value="">Loading...</option>
       </select>
     </div>
     <div class="sb-section">
-      <p class="sb-label">Month</p>
-      <div id="ttMonthGrid" class="camp-month-grid"></div>
-    </div>
-    <div class="sb-section">
       <p class="sb-label">Info</p>
-      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">TikTok Mastersheet. Profit excludes operations. Revenue &amp; profit in RM.</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">Data pulled from TikTok Mastersheet monthly tabs. Profit excludes operations cost.</p>
     </div>
   </aside>
   <main class="main-content">
@@ -277,14 +273,18 @@
 <div class="page-view" id="page-singapore">
   <aside class="sidebar">
     <div class="sb-section">
-      <p class="sb-label">Month</p>
-      <select id="sgMonthSelect" class="select-input" onchange="loadSingapore(this.value)">
-        <option value="">Loading...</option>
+      <p class="sb-label">Year</p>
+      <select id="sgYearSelect" class="select-input" onchange="setSgYear(this.value)">
+        <option value="">All Years</option>
       </select>
     </div>
     <div class="sb-section">
+      <p class="sb-label">Month</p>
+      <div id="sgMonthGrid" class="camp-month-grid"></div>
+    </div>
+    <div class="sb-section">
       <p class="sb-label">Info</p>
-      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">SG sales data. Revenue shown in SGD. Profit excludes operations.</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">SG sales. Revenue in SGD. Profit excludes operations. Select month to view.</p>
     </div>
   </aside>
   <main class="main-content">
@@ -486,7 +486,10 @@ function switchPage(page) {
   if(el)el.classList.add('active');
   const btn=document.querySelector('.page-tab[data-page="'+page+'"]');
   if(btn)btn.classList.add('active');
-  if(page==='campaign')loadCampaigns();
+  if(page==='campaign')  loadCampaigns();
+  if(page==='livehost')  loadLiveHost();
+  if(page==='tiktok')    loadTikTok();
+  if(page==='singapore') loadSingapore();
 }
 </script>
 </body>
