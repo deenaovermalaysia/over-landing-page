@@ -31,6 +31,10 @@
     .type-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700;}
     .type-campaign{background:rgba(99,102,241,.18);color:#a5b4fc;}
     .type-launch  {background:rgba(168,85,247,.18);color:#c084fc;}
+    .camp-year-picker{display:flex;flex-wrap:wrap;gap:5px;}
+    .camp-year-btn{padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s;}
+    .camp-year-btn:hover{border-color:var(--accent2);color:var(--text);}
+    .camp-year-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
     .camp-month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;}
     .camp-month-cell{padding:6px 2px;text-align:center;border-radius:6px;font-size:.68rem;font-weight:600;cursor:pointer;border:1px solid transparent;transition:all .15s;}
     .camp-month-cell.has-data{background:var(--surface2);color:var(--text);border-color:var(--border);}
@@ -75,6 +79,9 @@
   <button class="page-tab" data-page="daily"    onclick="switchPage('daily')">📅 Daily ROAS</button>
   <button class="page-tab active" data-page="product" onclick="switchPage('product')">📊 Product Daily ROAS</button>
   <button class="page-tab" data-page="campaign" onclick="switchPage('campaign')">🎯 Campaign Performance</button>
+  <button class="page-tab" data-page="livehost" onclick="switchPage('livehost')">🎙️ Live Host</button>
+  <button class="page-tab" data-page="tiktok"   onclick="switchPage('tiktok')">📱 TikTok</button>
+  <button class="page-tab" data-page="singapore" onclick="switchPage('singapore')">🇸🇬 Singapore</button>
 </nav>
 
 <div class="blank-page" id="page-daily">
@@ -87,9 +94,7 @@
   <aside class="sidebar">
     <div class="sb-section">
       <p class="sb-label">Year</p>
-      <select id="campYearSelect" class="select-input" onchange="setCampYear(this.value)">
-        <option value="">All Years</option>
-      </select>
+      <div id="campYearPicker" class="camp-year-picker"></div>
     </div>
     <div class="sb-section">
       <p class="sb-label">Month</p>
@@ -115,10 +120,10 @@
     <div class="sb-section">
       <p class="sb-label">Performance Key</p>
       <div class="roas-legend">
-        <div class="leg-item"><span class="leg-dot" style="background:#22c55e"></span>During &gt; Before/After</div>
-        <div class="leg-item"><span class="leg-dot" style="background:#ef4444"></span>During &lt; Before/After</div>
-        <div class="leg-item"><span class="leg-dot" style="background:#64748b"></span>Before / After</div>
-        <div class="leg-item"><span class="leg-dot dot-poor"></span>No unit data</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#22c55e"></span>Lift &gt; 20%</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#86efac"></span>Positive lift</div>
+        <div class="leg-item"><span class="leg-dot" style="background:#f87171"></span>Negative / flat</div>
+        <div class="leg-item"><span class="leg-dot dot-poor"></span>No data</div>
       </div>
     </div>
   </aside>
@@ -180,6 +185,121 @@
             <tbody id="campTableBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+
+<div class="page-view" id="page-livehost">
+  <aside class="sidebar">
+    <div class="sb-section">
+      <p class="sb-label">Missed Lives — Month</p>
+      <select id="lhSlotsMonth" class="select-input" onchange="loadLiveHost(this.value)">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="sb-section">
+      <p class="sb-label">What is LES?</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">Live Efficiency Score — measures how efficiently a host generates revenue per live session hour.</p>
+    </div>
+  </aside>
+  <main class="main-content">
+    <div id="lhLoading" class="state-overlay"><div class="spinner"></div><p>Loading live host data...</p></div>
+    <div id="lhError" class="state-overlay" style="display:none;">
+      <p style="color:#ef4444">⚠ Failed to load</p>
+      <p id="lhErrorMsg" style="color:#94a3b8;margin-top:4px;font-size:.85rem;"></p>
+      <button class="btn-retry" onclick="loadLiveHost()">Retry</button>
+    </div>
+    <div id="lhContent" style="display:none;">
+      <div class="stat-cards" style="margin-bottom:20px;">
+        <div class="stat-card"><p class="stat-label">Overall Avg LES</p><p class="stat-value" id="lhStatAvgLes">—</p><p class="stat-sub">all hosts · all sessions</p></div>
+        <div class="stat-card stat-card--green"><p class="stat-label">Best Host</p><p class="stat-value" id="lhStatBestHost">—</p><p class="stat-sub" id="lhStatBestLes"></p></div>
+        <div class="stat-card stat-card--purple"><p class="stat-label">Total Sessions</p><p class="stat-value" id="lhStatSessions">—</p><p class="stat-sub" id="lhStatSessionsSub"></p></div>
+        <div class="stat-card stat-card--red"><p class="stat-label">Missed Lives</p><p class="stat-value" id="lhStatMissed">—</p><p class="stat-sub" id="lhStatMissedSub">this month</p></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2 class="card-title">Average LES by Host</h2><span class="card-badge" id="lhChartBadge">All sessions</span></div>
+        <div class="chart-wrap" style="height:280px;"><canvas id="lhChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2 class="card-title">Host Breakdown</h2></div>
+        <div style="overflow-x:auto;">
+          <table class="perf-table">
+            <thead><tr><th>Host</th><th>Tier</th><th>Sessions</th><th style="text-align:right">Total Hours</th><th style="text-align:right">Total Revenue</th><th style="text-align:right">Avg LES</th></tr></thead>
+            <tbody id="lhTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="page-view" id="page-tiktok">
+  <aside class="sidebar">
+    <div class="sb-section">
+      <p class="sb-label">Month</p>
+      <select id="ttMonthSelect" class="select-input" onchange="loadTikTok(this.value)">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="sb-section">
+      <p class="sb-label">Info</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">Data pulled from TikTok Mastersheet monthly tabs. Profit excludes operations cost.</p>
+    </div>
+  </aside>
+  <main class="main-content">
+    <div id="ttLoading" class="state-overlay"><div class="spinner"></div><p>Loading TikTok data...</p></div>
+    <div id="ttError" class="state-overlay" style="display:none;">
+      <p style="color:#ef4444">⚠ Failed to load</p>
+      <p id="ttErrorMsg" style="color:#94a3b8;margin-top:4px;font-size:.85rem;"></p>
+      <button class="btn-retry" onclick="loadTikTok()">Retry</button>
+    </div>
+    <div id="ttContent" style="display:none;">
+      <div class="stat-cards" style="margin-bottom:20px;">
+        <div class="stat-card"><p class="stat-label">Total Revenue</p><p class="stat-value" id="ttStatRevenue">—</p><p class="stat-sub" id="ttStatRevenueSub"></p></div>
+        <div class="stat-card stat-card--green"><p class="stat-label">Total Profit</p><p class="stat-value" id="ttStatProfit">—</p><p class="stat-sub">excl. operations</p></div>
+        <div class="stat-card stat-card--purple"><p class="stat-label">Profit Margin</p><p class="stat-value" id="ttStatMargin">—</p><p class="stat-sub"></p></div>
+        <div class="stat-card stat-card--red"><p class="stat-label">Avg Daily ROAS</p><p class="stat-value" id="ttStatRoas">—</p><p class="stat-sub">days with data</p></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2 class="card-title">Daily Revenue &amp; Profit</h2><span class="card-badge" id="ttChartBadge">—</span></div>
+        <div class="chart-wrap"><canvas id="ttChart"></canvas></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="page-view" id="page-singapore">
+  <aside class="sidebar">
+    <div class="sb-section">
+      <p class="sb-label">Month</p>
+      <select id="sgMonthSelect" class="select-input" onchange="loadSingapore(this.value)">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="sb-section">
+      <p class="sb-label">Info</p>
+      <p style="font-size:.73rem;color:var(--muted);line-height:1.5">SG sales data. Revenue shown in SGD. Profit excludes operations.</p>
+    </div>
+  </aside>
+  <main class="main-content">
+    <div id="sgLoading" class="state-overlay"><div class="spinner"></div><p>Loading Singapore data...</p></div>
+    <div id="sgError" class="state-overlay" style="display:none;">
+      <p style="color:#ef4444">⚠ Failed to load</p>
+      <p id="sgErrorMsg" style="color:#94a3b8;margin-top:4px;font-size:.85rem;"></p>
+      <button class="btn-retry" onclick="loadSingapore()">Retry</button>
+    </div>
+    <div id="sgContent" style="display:none;">
+      <div class="stat-cards" style="margin-bottom:20px;">
+        <div class="stat-card"><p class="stat-label">Total Sales (SGD)</p><p class="stat-value" id="sgStatSGD">—</p><p class="stat-sub" id="sgStatRM"></p></div>
+        <div class="stat-card stat-card--green"><p class="stat-label">Total Profit</p><p class="stat-value" id="sgStatProfit">—</p><p class="stat-sub">excl. operations</p></div>
+        <div class="stat-card stat-card--purple"><p class="stat-label">Profit Margin</p><p class="stat-value" id="sgStatMargin">—</p><p class="stat-sub"></p></div>
+        <div class="stat-card stat-card--red"><p class="stat-label">Avg ROAS</p><p class="stat-value" id="sgStatRoas">—</p><p class="stat-sub">days with data</p></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2 class="card-title">Daily Sales (SGD)</h2><span class="card-badge" id="sgChartBadge">—</span></div>
+        <div class="chart-wrap"><canvas id="sgChart"></canvas></div>
       </div>
     </div>
   </main>

@@ -857,16 +857,19 @@ async function loadCampaigns() {
 // ── Build year pills + month grid ────────────────────────────────
 function buildCampPickers() {
   const years = [...new Set(camp.allData.map(c => c.year).filter(Boolean))].sort();
-  const sel = document.getElementById('campYearSelect');
-  if (sel) {
-    sel.innerHTML = '<option value="">All Years</option>';
-    years.forEach(y => {
-      const opt = document.createElement('option');
-      opt.value = y; opt.textContent = y;
-      if (y === camp.filterYear) opt.selected = true;
-      sel.appendChild(opt);
-    });
-  }
+
+  // Year pills
+  const yearDiv = document.getElementById('campYearPicker');
+  yearDiv.innerHTML = '';
+
+  ['', ...years].forEach(y => {
+    const btn = document.createElement('button');
+    btn.className = 'camp-year-btn' + (camp.filterYear === y ? ' active' : '');
+    btn.textContent = y || 'All';
+    btn.onclick = () => setCampYear(y);
+    yearDiv.appendChild(btn);
+  });
+
   buildMonthGrid();
 }
 
@@ -936,12 +939,10 @@ function filterCampaigns() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
-function calcLift(before, during, after) {
-  // Prefer Before as reference; fall back to After if Before unavailable
-  const ref = (before !== null) ? before : (after !== null ? after : null);
-  if (ref === null || during === null) return null;
-  if (ref === 0) return during > 0 ? 999 : null;
-  return ((during - ref) / ref) * 100;
+function calcLift(before, during) {
+  if (before === null || during === null) return null;
+  if (before === 0) return during > 0 ? 999 : null;
+  return ((during - before) / before) * 100;
 }
 
 function fmtLift(lift) {
@@ -962,13 +963,13 @@ function renderCampaigns() {
 
   // Stat cards
   const withData = data.filter(c => c.unitsBefore !== null && c.unitsDuring !== null);
-  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter)).filter(l => l !== null && l !== 999);
+  const lifts    = withData.map(c => calcLift(c.unitsBefore, c.unitsDuring)).filter(l => l !== null && l !== 999);
   const avgLift  = lifts.length ? lifts.reduce((a,b)=>a+b,0)/lifts.length : null;
-  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter) || 0) < 0).length;
+  const declined = withData.filter(c => (calcLift(c.unitsBefore, c.unitsDuring) || 0) < 0).length;
 
   let bestLift = null, bestName = '—';
   withData.forEach(c => {
-    const l = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
+    const l = calcLift(c.unitsBefore, c.unitsDuring);
     if (l !== null && (bestLift === null || l > bestLift)) { bestLift = l; bestName = c.name; }
   });
 
@@ -991,23 +992,6 @@ function renderCampaigns() {
   // ── Bar chart with detailed tooltip ─────────────────────────
   if (camp.chart) camp.chart.destroy();
   const ctx = document.getElementById('campChart').getContext('2d');
-
-  // During color: compare vs Before; fallback to After if Before is null
-  const duringBg = data.map(c => {
-    const ref = c.unitsBefore !== null ? c.unitsBefore : c.unitsAfter;
-    if (ref === null || c.unitsDuring === null) return 'rgba(100,116,139,.55)';
-    if (c.unitsDuring > ref) return 'rgba(34,197,94,.78)';
-    if (c.unitsDuring < ref) return 'rgba(239,68,68,.78)';
-    return 'rgba(100,116,139,.55)';
-  });
-  const duringBorder = data.map(c => {
-    const ref = c.unitsBefore !== null ? c.unitsBefore : c.unitsAfter;
-    if (ref === null || c.unitsDuring === null) return '#64748b';
-    if (c.unitsDuring > ref) return '#22c55e';
-    if (c.unitsDuring < ref) return '#ef4444';
-    return '#64748b';
-  });
-
   const labels = data.map(c => {
     const period = c.month ? c.month.slice(0,3) + (c.year ? " '" + c.year.slice(2) : '') : '';
     const name   = c.name.length > 22 ? c.name.slice(0,20) + '…' : c.name;
@@ -1019,9 +1003,9 @@ function renderCampaigns() {
     data: {
       labels,
       datasets: [
-        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.45)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
-        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:duringBg, borderColor:duringBorder, borderWidth:1, borderRadius:3 },
-        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(100,116,139,.28)', borderColor:'#475569', borderWidth:1, borderRadius:3 },
+        { label:'Before', data:data.map(c=>c.unitsBefore||0), backgroundColor:'rgba(100,116,139,.55)', borderColor:'#64748b', borderWidth:1, borderRadius:3 },
+        { label:'During', data:data.map(c=>c.unitsDuring||0), backgroundColor:'rgba(99,102,241,.75)',  borderColor:'#6366f1', borderWidth:1, borderRadius:3 },
+        { label:'After',  data:data.map(c=>c.unitsAfter||0),  backgroundColor:'rgba(34,197,94,.6)',   borderColor:'#22c55e', borderWidth:1, borderRadius:3 },
       ],
     },
     options: {
@@ -1054,7 +1038,7 @@ function renderCampaigns() {
               if (c.beforeRange) lines.push(`📅 Before:  ${c.beforeRange}`);
               if (c.duringRange) lines.push(`📅 During:  ${c.duringRange}`);
               if (c.afterRange)  lines.push(`📅 After:   ${c.afterRange}`);
-              const lift = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
+              const lift = calcLift(c.unitsBefore, c.unitsDuring);
               if (lift !== null) lines.push(`📈 Lift:    ${fmtLift(lift).text}`);
               if (c.giftItem)   lines.push(`🎁 Gift:    ${c.giftItem}${c.giftClaimed ? ' ('+c.giftClaimed+' claimed)' : ''}`);
               return lines;
@@ -1079,7 +1063,7 @@ function renderCampaigns() {
   }
 
   data.forEach(c => {
-    const lift = calcLift(c.unitsBefore, c.unitsDuring, c.unitsAfter);
+    const lift = calcLift(c.unitsBefore, c.unitsDuring);
     const { text:liftText, cls:liftCls } = fmtLift(lift);
     const rowCls = lift===null?'' : lift>20?'camp-row-great' : lift>0?'camp-row-good' : 'camp-row-bad';
 
@@ -1107,5 +1091,272 @@ function renderCampaigns() {
       <td style="font-size:.78rem">${c.giftItem||'—'}</td>
       <td style="text-align:right">${c.giftClaimed!==null?c.giftClaimed:'—'}</td>`;
     tbody.appendChild(tr);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LIVE HOST
+// ═══════════════════════════════════════════════════════════════
+const lh = { data:null, chart:null, loaded:false };
+
+async function loadLiveHost(slotsMonth) {
+  const url = '/api/live-host' + (slotsMonth ? '?slotsMonth='+encodeURIComponent(slotsMonth) : '');
+  document.getElementById('lhLoading').style.display = 'flex';
+  document.getElementById('lhError').style.display   = 'none';
+  document.getElementById('lhContent').style.display = 'none';
+  try {
+    const res  = await fetch(url, { credentials:'same-origin' });
+    if (res.status===401) { window.location.href='/login.html'; return; }
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.detail || json.error);
+    lh.data   = json;
+    lh.loaded = true;
+    // Populate month dropdown
+    const sel = document.getElementById('lhSlotsMonth');
+    if (json.slotTabs && json.slotTabs.length) {
+      sel.innerHTML = json.slotTabs.map(t =>
+        `<option value="${t}" ${t===json.slotsMonth?'selected':''}>${t}</option>`
+      ).join('');
+    } else {
+      sel.innerHTML = `<option value="${json.slotsMonth}">${json.slotsMonth}</option>`;
+    }
+    document.getElementById('lhLoading').style.display = 'none';
+    document.getElementById('lhContent').style.display = 'block';
+    renderLiveHost();
+  } catch(err) {
+    console.error(err);
+    document.getElementById('lhLoading').style.display = 'none';
+    document.getElementById('lhError').style.display   = 'flex';
+    document.getElementById('lhErrorMsg').textContent  = err.message;
+  }
+}
+
+function renderLiveHost() {
+  const { hosts, missedLives, slotsMonth } = lh.data;
+  // Stat cards
+  const allLes = hosts.map(h=>h.avgLes).filter(v=>v>0);
+  const overallAvg = allLes.length ? (allLes.reduce((a,b)=>a+b,0)/allLes.length).toFixed(2) : '—';
+  const best = hosts[0];
+  const totalSessions = hosts.reduce((a,h)=>a+h.sessions, 0);
+  document.getElementById('lhStatAvgLes').textContent    = overallAvg;
+  document.getElementById('lhStatBestHost').textContent  = best ? best.host : '—';
+  document.getElementById('lhStatBestLes').textContent   = best ? `LES: ${best.avgLes}` : '';
+  document.getElementById('lhStatSessions').textContent  = totalSessions;
+  document.getElementById('lhStatSessionsSub').textContent = `across ${hosts.length} hosts`;
+  document.getElementById('lhStatMissed').textContent    = missedLives.missed;
+  document.getElementById('lhStatMissedSub').textContent = `${slotsMonth} · ${missedLives.totalConducted}/${missedLives.totalScheduled} conducted`;
+  document.getElementById('lhChartBadge').textContent    = 'All sessions · ' + slotsMonth;
+
+  // Bar chart — LES per host
+  if (lh.chart) lh.chart.destroy();
+  const TIER_COLORS = { Legendary:'#f59e0b', Master:'#6366f1', Amateur:'#22c55e' };
+  const colors = hosts.map(h => TIER_COLORS[h.tier] || '#64748b');
+  lh.chart = new Chart(document.getElementById('lhChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: hosts.map(h=>h.host),
+      datasets: [{
+        label:'Avg LES', data:hosts.map(h=>h.avgLes),
+        backgroundColor:colors.map(c=>c+'BB'), borderColor:colors, borderWidth:1, borderRadius:6,
+      }],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: {
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#1e293b', borderColor:'#334155', borderWidth:1,
+          titleColor:'#f1f5f9', bodyColor:'#94a3b8',
+          callbacks:{
+            title: items => {
+              const h = hosts[items[0].dataIndex];
+              return `${h.host} · ${h.tier}`;
+            },
+            label: ctx => ` Avg LES: ${ctx.parsed.y}`,
+            afterBody: items => {
+              const h = hosts[items[0].dataIndex];
+              return [` Sessions: ${h.sessions}`, ` Total Hours: ${h.totalHours}h`, ` Total Revenue: RM${h.totalRevenue.toLocaleString('en-MY',{minimumFractionDigits:2})}`];
+            },
+          },
+        },
+      },
+      scales:{
+        x:{ticks:{color:'#94a3b8',font:{size:11}},grid:{color:'#1e293b'}},
+        y:{beginAtZero:true,ticks:{color:'#64748b'},grid:{color:'#273549'}},
+      },
+    },
+  });
+
+  // Table
+  const tbody = document.getElementById('lhTableBody');
+  tbody.innerHTML = '';
+  hosts.forEach(h => {
+    const tierColor = { Legendary:'#f59e0b', Master:'#6366f1', Amateur:'#22c55e' }[h.tier] || '#64748b';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:700">${h.host}</td>
+      <td><span style="color:${tierColor};font-weight:600;font-size:.78rem">${h.tier}</span></td>
+      <td>${h.sessions}</td>
+      <td style="text-align:right">${h.totalHours}h</td>
+      <td style="text-align:right">RM ${h.totalRevenue.toLocaleString('en-MY',{minimumFractionDigits:2})}</td>
+      <td style="text-align:right;font-weight:700;color:#f1f5f9">${h.avgLes || '—'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIKTOK
+// ═══════════════════════════════════════════════════════════════
+const tt = { data:null, chart:null, loaded:false, currentTab:null };
+
+async function loadTikTok(tab) {
+  const url = '/api/tiktok' + (tab ? '?tab='+encodeURIComponent(tab) : '');
+  document.getElementById('ttLoading').style.display = 'flex';
+  document.getElementById('ttError').style.display   = 'none';
+  document.getElementById('ttContent').style.display = 'none';
+  try {
+    const res  = await fetch(url, { credentials:'same-origin' });
+    if (res.status===401) { window.location.href='/login.html'; return; }
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.detail || json.error);
+    tt.data = json; tt.currentTab = json.tab;
+    // Populate dropdown
+    const sel = document.getElementById('ttMonthSelect');
+    if (json.availTabs && json.availTabs.length) {
+      sel.innerHTML = json.availTabs.map(t=>
+        `<option value="${t}" ${t===json.tab?'selected':''}>${t}</option>`
+      ).join('');
+    }
+    document.getElementById('ttLoading').style.display = 'none';
+    document.getElementById('ttContent').style.display = 'block';
+    renderTikTok();
+  } catch(err) {
+    console.error(err);
+    document.getElementById('ttLoading').style.display = 'none';
+    document.getElementById('ttError').style.display   = 'flex';
+    document.getElementById('ttErrorMsg').textContent  = err.message;
+  }
+}
+
+function renderTikTok() {
+  const { totalRevenue, totalProfit, daily, tab } = tt.data;
+  const fmtRM = v => 'RM ' + v.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const margin = totalRevenue > 0 ? ((totalProfit/totalRevenue)*100).toFixed(1)+'%' : '—';
+  const roasDays = daily.filter(d=>d.roas>0);
+  const avgRoas  = roasDays.length ? (roasDays.reduce((a,d)=>a+d.roas,0)/roasDays.length).toFixed(2)+'x' : '—';
+
+  document.getElementById('ttStatRevenue').textContent   = fmtRM(totalRevenue);
+  document.getElementById('ttStatProfit').textContent    = fmtRM(totalProfit);
+  document.getElementById('ttStatMargin').textContent    = margin;
+  document.getElementById('ttStatRoas').textContent      = avgRoas;
+  document.getElementById('ttChartBadge').textContent    = tab;
+
+  if (tt.chart) tt.chart.destroy();
+  const activeDays = daily.filter(d=>d.sales>0);
+  const labels = activeDays.map(d=>{ const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
+
+  tt.chart = new Chart(document.getElementById('ttChart').getContext('2d'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {label:'TikTok Sales',data:activeDays.map(d=>d.sales),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',borderWidth:2,pointRadius:2,tension:0.3,fill:true},
+        {label:'Profit',      data:activeDays.map(d=>d.profit),borderColor:'#6366f1',backgroundColor:'transparent',borderWidth:2,pointRadius:2,tension:0.3},
+        {label:'Ads Cost',    data:activeDays.map(d=>d.adsCost),borderColor:'#ef4444',backgroundColor:'transparent',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3},
+      ],
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11},padding:16}},
+        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
+          titleColor:'#f1f5f9',bodyColor:'#94a3b8',
+          callbacks:{label:c=>` ${c.dataset.label}: RM${c.parsed.y.toLocaleString('en-MY',{minimumFractionDigits:2})}`}},
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45},grid:{color:'#1e293b'}},
+        y:{beginAtZero:true,ticks:{color:'#64748b',callback:v=>'RM'+v.toLocaleString()},grid:{color:'#273549'}},
+      },
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SINGAPORE
+// ═══════════════════════════════════════════════════════════════
+const sg = { data:null, chart:null, loaded:false, currentTab:null };
+
+async function loadSingapore(tab) {
+  const url = '/api/singapore' + (tab ? '?tab='+encodeURIComponent(tab) : '');
+  document.getElementById('sgLoading').style.display = 'flex';
+  document.getElementById('sgError').style.display   = 'none';
+  document.getElementById('sgContent').style.display = 'none';
+  try {
+    const res  = await fetch(url, { credentials:'same-origin' });
+    if (res.status===401) { window.location.href='/login.html'; return; }
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.detail || json.error);
+    sg.data = json; sg.currentTab = json.tab;
+    const sel = document.getElementById('sgMonthSelect');
+    if (json.availTabs && json.availTabs.length) {
+      sel.innerHTML = json.availTabs.map(t=>
+        `<option value="${t}" ${t===json.tab?'selected':''}>${t}</option>`
+      ).join('');
+    }
+    document.getElementById('sgLoading').style.display = 'none';
+    document.getElementById('sgContent').style.display = 'block';
+    renderSingapore();
+  } catch(err) {
+    console.error(err);
+    document.getElementById('sgLoading').style.display = 'none';
+    document.getElementById('sgError').style.display   = 'flex';
+    document.getElementById('sgErrorMsg').textContent  = err.message;
+  }
+}
+
+function renderSingapore() {
+  const { totalRevenueSGD, totalRevenueRM, totalProfit, daily, tab } = sg.data;
+  const fmtSGD = v => '$' + v.toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtRM  = v => 'RM ' + v.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const margin = totalRevenueSGD > 0 ? ((totalProfit/totalRevenueSGD)*100).toFixed(1)+'%' : '—';
+  const roasDays = daily.filter(d=>d.roas>0);
+  const avgRoas  = roasDays.length ? (roasDays.reduce((a,d)=>a+d.roas,0)/roasDays.length).toFixed(2)+'x' : '—';
+
+  document.getElementById('sgStatSGD').textContent    = fmtSGD(totalRevenueSGD);
+  document.getElementById('sgStatRM').textContent     = `≈ ${fmtRM(totalRevenueRM)}`;
+  document.getElementById('sgStatProfit').textContent = fmtSGD(totalProfit);
+  document.getElementById('sgStatMargin').textContent = margin;
+  document.getElementById('sgStatRoas').textContent   = avgRoas;
+  document.getElementById('sgChartBadge').textContent = tab;
+
+  if (sg.chart) sg.chart.destroy();
+  const activeDays = daily.filter(d=>d.totalSales>0);
+  const labels = activeDays.map(d=>{ const p=d.date.split('/'); return `${p[0]}/${p[1]}`; });
+
+  sg.chart = new Chart(document.getElementById('sgChart').getContext('2d'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {label:'Total Sales (SGD)',data:activeDays.map(d=>d.totalSales),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',borderWidth:2,pointRadius:2,tension:0.3,fill:true},
+        {label:'Website SG',      data:activeDays.map(d=>d.websiteSG), borderColor:'#6366f1',backgroundColor:'transparent',borderWidth:1.5,pointRadius:2,tension:0.3},
+        {label:'Shopee SG',       data:activeDays.map(d=>d.shopeeSG),  borderColor:'#f59e0b',backgroundColor:'transparent',borderWidth:1.5,pointRadius:2,tension:0.3},
+      ],
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11},padding:16}},
+        tooltip:{backgroundColor:'#1e293b',borderColor:'#334155',borderWidth:1,
+          titleColor:'#f1f5f9',bodyColor:'#94a3b8',
+          callbacks:{label:c=>` ${c.dataset.label}: $${c.parsed.y.toLocaleString('en-SG',{minimumFractionDigits:2})}`}},
+      },
+      scales:{
+        x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45},grid:{color:'#1e293b'}},
+        y:{beginAtZero:true,ticks:{color:'#64748b',callback:v=>'$'+v.toLocaleString()},grid:{color:'#273549'}},
+      },
+    },
   });
 }

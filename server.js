@@ -278,20 +278,16 @@ function parseCampaignData(rows) {
       if (rawPlatform.includes('MY Offline')) platforms.push('MY Offline');
       if (platforms.length === 0 && rawPlatform) platforms.push(rawPlatform);
 
-      // Derive month + year directly from Start Date "DD/MM/YYYY" — reliable, no header parsing needed
+      // Extract year from startDate e.g. "09/04/2026" → "2026"
       const rawStart = cleanStr(row[3]);
-      let year = '', month = currentMonth;
+      let year = '';
       if (rawStart && rawStart !== '-') {
         const yp = rawStart.split('/');
-        if (yp.length === 3 && yp[2].length === 4) {
-          year  = yp[2];
-          const mIdx = parseInt(yp[1], 10) - 1;  // 0-based
-          if (mIdx >= 0 && mIdx < 12) month = MONTH_NAMES_LIST[mIdx];
-        }
+        if (yp.length === 3 && yp[2].length === 4) year = yp[2];
       }
 
       pendingCampaign = {
-        month,
+        month:        currentMonth,
         year,
         type:         colA,
         name:         cleanStr(row[1]),
@@ -335,4 +331,207 @@ app.get('/api/campaigns', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch campaign data', detail: err.message });
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════
+// EXTERNAL SPREADSHEET IDs
+// ═══════════════════════════════════════════════════════════════
+const LIVE_HOST_REVENUE_ID = '1OfzMUVUmeF_GwsDDEhyCQFdTW7hXKGqFUfkDVQNYUA4';
+const LIVE_HOST_SLOTS_ID   = '1IznHjn982ZKcm5ezznRGriEFm8OeB-1ShgoHmzVCkjE';
+const TIKTOK_ID            = '1fAd8o_GOW30pzt2vEvG8N0f6DSQuG8lNDR4kikhLdKk';
+const SINGAPORE_ID         = '1Ok11uMRU6-eTV5RIF-EaYjq7EPWPD293BPMU-0NQirs';
+
+function extCleanNum(s) {
+  const n = parseFloat(String(s || '').replace(/[^0-9.-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+// ─── Live Host parsers ────────────────────────────────────────
+function parseHostRevenue(rows) {
+  const hostMap = {};
+  rows.forEach((row, i) => {
+    if (i === 0) return; // skip header
+    const host = String(row[3] || '').trim();
+    if (!host || host === 'Host') return;
+    const tier     = String(row[4] || '').trim();
+    const hours    = extCleanNum(String(row[6] || '').replace(/[^0-9.]/g, ''));
+    const revenue  = extCleanNum(String(row[8] || '').replace(/[^0-9.]/g, ''));
+    const lesStr   = row[32] ? String(row[32]).replace(/[^0-9.]/g, '') : '';
+    const les      = lesStr ? extCleanNum(lesStr) : null;
+    if (!hostMap[host]) hostMap[host] = { host, tier, sessions:0, totalHours:0, totalRevenue:0, lesValues:[] };
+    hostMap[host].sessions++;
+    hostMap[host].totalHours   += hours;
+    hostMap[host].totalRevenue += revenue;
+    if (les !== null && les > 0) hostMap[host].lesValues.push(les);
+  });
+  return Object.values(hostMap).map(h => ({
+    host: h.host, tier: h.tier, sessions: h.sessions,
+    totalHours:   +h.totalHours.toFixed(1),
+    totalRevenue: +h.totalRevenue.toFixed(2),
+    avgLes: h.lesValues.length ? +(h.lesValues.reduce((a,b)=>a+b,0)/h.lesValues.length).toFixed(2) : 0,
+  })).sort((a,b) => b.avgLes - a.avgLes);
+}
+
+function parseMissedLives(rows) {
+  let totalScheduled = 0, totalConducted = 0, missed = 0;
+  rows.forEach(row => {
+    const label = String(row[0] || '').toLowerCase();
+    const val   = parseInt(String(row[1] || '').replace(/[^0-9]/g, '')) || 0;
+    if (label.includes('scheduled')) totalScheduled = val;
+    if (label.includes('conducted')) totalConducted = val;
+    if (label.includes('missed'))    missed = val;
+  });
+  return { totalScheduled, totalConducted, missed };
+}
+
+app.get('/api/live-host', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const { slotsMonth } = req.query;
+    const now = new Date();
+    const slotTab = slotsMonth || `${MONTH_NAMES_LIST[now.getMonth()]} (${now.getFullYear()})`;
+
+    const revenueRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: LIVE_HOST_REVENUE_ID,
+      range: "'Host Revenue'!A:AG",
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+
+    let missedLives = { totalScheduled:0, totalConducted:0, missed:0 };
+    try {
+      const slotsRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: LIVE_HOST_SLOTS_ID,
+        range: `'${slotTab}'!K20:L30`,
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      missedLives = parseMissedLives(slotsRes.data.values || []);
+    } catch(e) { console.warn('[Live Slots] Tab not found:', slotTab); }
+
+    let slotTabs = [];
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: LIVE_HOST_SLOTS_ID });
+      slotTabs = meta.data.sheets.map(s => s.properties.title)
+        .filter(t => /^[A-Za-z]+ \(\d{4}\)$/.test(t)).reverse();
+    } catch(e) {}
+
+    const hosts = parseHostRevenue(revenueRes.data.values || []);
+    res.json({ success:true, hosts, missedLives, slotsMonth: slotTab, slotTabs });
+  } catch(err) {
+    console.error('[Live Host]', err.message);
+    res.status(500).json({ error:'Failed', detail: err.message });
+  }
+});
+
+// ─── TikTok parsers ───────────────────────────────────────────
+function parseTikTokData(rows) {
+  let totalRevenue = 0, totalProfit = 0;
+  [[rows[0], 'rev'], [rows[1], 'prof']].forEach(([row, key]) => {
+    (row || []).forEach(cell => {
+      const s = String(cell || '');
+      if (s.startsWith('RM')) {
+        const v = extCleanNum(s);
+        if (v > 0) { if (key==='rev' && !totalRevenue) totalRevenue = v; if (key==='prof' && !totalProfit) totalProfit = v; }
+      }
+    });
+  });
+  const daily = [];
+  for (let i = 3; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const ds = String(row[0] || '').trim();
+    if (!ds || !/\d{1,2}\/\d{2}\/\d{4}/.test(ds)) continue;
+    daily.push({ date:ds, sales:extCleanNum(row[1]), adsCost:extCleanNum(row[2]),
+      cogs:extCleanNum(row[3]), platFees:extCleanNum(row[4]),
+      hostCost:extCleanNum(row[5]), kolFees:extCleanNum(row[6]),
+      profit:extCleanNum(row[7]), roas:extCleanNum(row[8]) });
+  }
+  return { totalRevenue, totalProfit, daily };
+}
+
+app.get('/api/tiktok', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const { tab } = req.query;
+
+    let availTabs = [];
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: TIKTOK_ID });
+      availTabs = meta.data.sheets.map(s => s.properties.title)
+        .filter(t => /^[A-Z]+ \d{4}$/.test(t)).reverse();
+    } catch(e) {}
+
+    const useTab = tab || availTabs[0];
+    if (!useTab) return res.status(400).json({ error:'No tab' });
+
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: TIKTOK_ID,
+      range: `'${useTab}'!A1:J35`,
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+    const data = parseTikTokData(resp.data.values || []);
+    res.json({ success:true, tab:useTab, availTabs, ...data });
+  } catch(err) {
+    console.error('[TikTok]', err.message);
+    res.status(500).json({ error:'Failed', detail: err.message });
+  }
+});
+
+// ─── Singapore parsers ────────────────────────────────────────
+function parseSingaporeData(rows) {
+  let totalRevenueSGD = 0, totalRevenueRM = 0, totalProfit = 0;
+  (rows[0] || []).forEach(cell => {
+    const s = String(cell || '');
+    if (s.startsWith('$') && !totalRevenueSGD) totalRevenueSGD = extCleanNum(s);
+    if (s.startsWith('RM') && !totalRevenueRM) totalRevenueRM  = extCleanNum(s);
+  });
+  (rows[1] || []).forEach(cell => {
+    const s = String(cell || '');
+    if (s.startsWith('$') && !totalProfit) totalProfit = extCleanNum(s);
+  });
+
+  const daily = [];
+  for (let i = 3; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const ds = String(row[1] || row[0] || '').trim();
+    if (!ds || !/\d{1,2}\/\d{2}\/\d{4}/.test(ds)) continue;
+    daily.push({ date:ds,
+      shopeeAds: extCleanNum(row[2]), googleAds: extCleanNum(row[3]),
+      metaAdsRM: extCleanNum(row[5]), shopeeMY: extCleanNum(row[6]),
+      shopeeSG:  extCleanNum(row[7]), websiteSG: extCleanNum(row[8]),
+      totalSales:extCleanNum(row[9]),
+      roasShopee:extCleanNum(row[10]), roasWebsite:extCleanNum(row[11]), roas:extCleanNum(row[12]) });
+  }
+  return { totalRevenueSGD, totalRevenueRM, totalProfit, daily };
+}
+
+app.get('/api/singapore', requireAuth, async (req, res) => {
+  try {
+    const auth   = getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const { tab } = req.query;
+
+    let availTabs = [];
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: SINGAPORE_ID });
+      availTabs = meta.data.sheets.map(s => s.properties.title)
+        .filter(t => /^[A-Za-z]+ \d{4}$/.test(t)).reverse();
+    } catch(e) {}
+
+    const useTab = tab || availTabs[0];
+    if (!useTab) return res.status(400).json({ error:'No tab' });
+
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId: SINGAPORE_ID,
+      range: `'${useTab}'!A1:R35`,
+      valueRenderOption: 'FORMATTED_VALUE',
+    });
+    const data = parseSingaporeData(resp.data.values || []);
+    res.json({ success:true, tab:useTab, availTabs, ...data });
+  } catch(err) {
+    console.error('[Singapore]', err.message);
+    res.status(500).json({ error:'Failed', detail: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
